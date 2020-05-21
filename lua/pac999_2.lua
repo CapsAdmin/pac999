@@ -87,15 +87,25 @@ do
     end
 
     local function sort_by_camera_distance(a, b)
-        return
-            a:GetMatrix():GetTranslation():Distance(EyePos()) <
+        return a:GetMatrix():GetTranslation():Distance(EyePos()) <
             b:GetMatrix():GetTranslation():Distance(EyePos())
     end
 
     function input.Update()
-        local inputs = pac999.object.active
+        local inputs = {}
+
+        for i, v in ipairs(pac999.object.active) do
+            inputs[i] = v
+        end
 
         table.sort(inputs, sort_by_camera_distance)
+
+        for i,v in ipairs(inputs) do
+            if v.IgnoreZ then
+                table.remove(inputs, i)
+                table.insert(inputs, 1, v)
+            end
+        end
 
         if input.grabbed then
             local obj = input.grabbed
@@ -291,10 +301,6 @@ do
         end
 
         function META:FireEvent(name, ...)
-            if name ~= "Render3D" and name ~= "Update" then
-                print(self, name, ...)
-            end
-
             if not self.events[name] then return false end
 
             for _, event in ipairs(self.events[name]) do
@@ -321,8 +327,9 @@ do
         function META:RemoveEvent(name, sub_id)
             if not self.events[name] then return false end
 
-            for _, event in ipairs(self.events[name]) do
+            for i, event in ipairs(self.events[name]) do
                 if event.id == sub_id then
+                    table.remove(self.events[name], i)
                     return true
                 end
             end
@@ -345,17 +352,22 @@ do
             self[name] = setmetatable({}, meta)
             table.insert(self.Components, self[name])
 
-            for name, callback in pairs(meta.EVENTS) do
-                self:AddEvent(name, callback, "metatable_" .. name)
+            for event_name, callback in pairs(meta.EVENTS) do
+                self:AddEvent(event_name, callback, "metatable_" .. name)
             end
 
             table.insert(object.active_components[meta.ClassName], self[name])
         end
 
         function META:RemoveComponent(name)
-            local component =self[name]
+            local component = self[name]
             assert(component)
             self[name] = nil
+
+
+            for event_name in pairs(object.registered[name].EVENTS) do
+                print(self:RemoveEvent(event_name, "metatable_" .. name))
+            end
 
             table_remove_value(self.Components, component)
             table_remove_value(object.active_components[component.ClassName], component)
@@ -439,7 +451,6 @@ do -- components
         function META.EVENTS:Start()
             self.Children = {}
             self.Parent = nil
-            print(self.Children, "!")
         end
 
         function META:GetParent()
@@ -498,7 +509,6 @@ do -- components
 
         function META:AddChild(part)
             part.Parent = self
-            print(self.Children, "?")
             table.insert(self.Children, part)
         end
 
@@ -541,7 +551,7 @@ do -- components
             self.Entity = ent
 
             utility.ObjectFunctionHook("pac999", ent, "CalcAbsolutePosition", function()
-                print("abs!")
+
             end)
         end
 
@@ -636,12 +646,6 @@ do -- components
                 Color(255,0,0, 0)
             )
 
-            debugoverlay.Sphere(
-                self:GetWorldSpaceCenter(),
-                self:GetBoundingRadius(),
-                0,
-                Color(255,0,0, 0)
-            )
         end
 
         META.Min = vector_origin
@@ -656,6 +660,7 @@ do -- components
             return self.Min, self.Max
         end
 
+        -- TODO: rotation doesn't work properly
         function META:GetWorldSpaceBoundingBox()
             local mins, maxs = self:GetBoundingBox()
 
@@ -714,25 +719,21 @@ do -- components
 
         local META = pac999.object.Template("input", {"transform", "bounding_box"})
 
+        function META:SetIgnoreZ(b)
+            self.IgnoreZ = b
+        end
+
         function META:SetPointerOver(b)
             if self.Hovered ~= b then
                 self.Hovered = b
-                if b then
-                    self:FireEvent("PointerEnter")
-                else
-                    self:FireEvent("PointerLeft")
-                end
+                self:FireEvent("Pointer", self.Hovered, self.Grabbed)
             end
         end
 
         function META:SetPointerDown(b)
             if self.Grabbed ~= b then
                 self.Grabbed = b
-                if b then
-                    self:FireEvent("PointerDown")
-                else
-                    self:FireEvent("PointerUp")
-                end
+                self:FireEvent("Pointer", self.Hovered, self.Grabbed)
             end
         end
 
@@ -762,6 +763,10 @@ do -- components
             self.Model:SetNoDraw(true)
         end
 
+        function META:SetIgnoreZ(b)
+            self.IgnoreZ = b
+        end
+
         function META.EVENTS:Render3D()
             local mdl = self.Model
             local world = self:GetMatrix()
@@ -777,7 +782,14 @@ do -- components
             m:SetTranslation(vector_origin)
             mdl:EnableMatrix("RenderMultiply", m)
             mdl:SetupBones()
+
+            if self.IgnoreZ then
+                cam.IgnoreZ(true)
+            end
             mdl:DrawModel()
+            if self.IgnoreZ then
+                cam.IgnoreZ(false)
+            end
         end
 
         function META:SetModel(mdl)
@@ -800,24 +812,42 @@ do -- components
     do -- gizmo
         local META = pac999.object.Template("gizmo")
 
+        function META.EVENTS:Update()
+            if self.center_grab then
+                self:SetWorldMatrix(pac999.camera.GetViewMatrix() * self.center_grab)
+            end
+        end
+
+        local function create_grab(self, pos)
+            local obj = pac999.scene.AddNode(self)
+            obj:SetIgnoreZ(true)
+            obj:RemoveComponent("gizmo")
+            obj:SetModel("models/hunter/blocks/cube025x025x025.mdl")
+            obj:SetPosition(pos)
+            return obj
+        end
+
         function META:EnableGizmo(b)
             if b then
-                local x = pac999.scene.AddNode(self)
-                x:SetModel("models/hunter/blocks/cube025x025x025.mdl")
-                x:SetPosition(Vector(150,0,0))
+                local dist = 50
+
+                local c = create_grab(self, Vector(0,0,0))
+                c:AddEvent("Pointer", function(component, hovered, grabbed)
+                    self.center_grab = grabbed and pac999.camera.GetViewMatrix():GetInverse() * self:GetMatrix() or nil
+                end)
+                self.center_axis = c
+
+                local x = create_grab(self, Vector(1,0,0)*dist)
                 self.x_axis = x
 
-                local y = pac999.scene.AddNode(self)
-                y:SetModel("models/hunter/blocks/cube025x025x025.mdl")
-                y:SetPosition(Vector(0,150,0))
+                local y = create_grab(self, Vector(0,1,0)*dist)
                 self.y_axis = y
 
-                local z = pac999.scene.AddNode(self)
-                z:SetPosition(Vector(0,0,150))
-                z:SetModel("models/hunter/blocks/cube025x025x025.mdl")
+                local z = create_grab(self, Vector(0,0,1)*dist)
                 self.z_axis = z
             else
-                if self.x_axis then
+                if self.center_axis then
+                    self.center_axis:Remove()
                     self.x_axis:Remove()
                     self.y_axis:Remove()
                     self.z_axis:Remove()
@@ -826,8 +856,10 @@ do -- components
             self.gizmoenabled = b
         end
 
-        function META.EVENTS:PointerDown()
-            self:EnableGizmo(not self.gizmoenabled)
+        function META.EVENTS:Pointer(hovered, grabbed)
+            if grabbed then
+                self:EnableGizmo(not self.gizmoenabled)
+            end
         end
 
         META:Register()
@@ -863,13 +895,14 @@ do
 end
 
 if me then
-    local node = pac999.scene.AddNode()
-    node:SetPosition(Vector(1000, -500, 1000))
+    local root = pac999.scene.AddNode()
+    root:SetPosition(Vector(1000, -500, 1000))
 
     for i = 1, 10 do
-        local node = pac999.scene.AddNode(node)
-        node:SetPosition(Vector((i*150),0 ,0))
+        local node = pac999.scene.AddNode(root)
+        node:SetPosition(Vector(50, 0 ,0))
         node:SetModel("models/props_c17/oildrum001.mdl")
+        root = node
     end
 
     for name, objects in pairs(pac999.object.active) do
