@@ -96,6 +96,16 @@ do
 	function camera.IntersectRayWithOBB(pos, ang, min, max)
 		local view = camera.GetViewMatrix()
 
+
+		debugoverlay.BoxAngles(
+			pos,
+			min,
+			max,
+			ang,
+			0,
+			Color(255,0,0, 0)
+		)
+
 		return util.IntersectRayWithOBB(
 			view:GetTranslation(),
 			view:GetForward() * 32000,
@@ -184,6 +194,8 @@ do
 				obj:SetHitNormal(normal)
 				obj:SetPointerOver(true)
 				obj:SetPointerDown(input.IsGrabbing())
+
+
 
 				if input.IsGrabbing() then
 					input.grabbed = obj
@@ -861,6 +873,7 @@ do -- components
 		local META = pac999.entity.ComponentTemplate("bounding_box", {"transform", "node"})
 
 		function META.EVENTS:Update()
+			do return end
 			local min, max = self:GetWorldSpaceBoundingBoxChildren()
 			if not min then return end
 
@@ -877,9 +890,10 @@ do -- components
 		META.Min = vector_origin
 		META.Max = vector_origin
 
-		function META:SetBoundingBox(min, max)
+		function META:SetBoundingBox(min, max, angle_offset)
 			self.Min = min
 			self.Max = max
+			self.angle_offset = angle_offset
 		end
 
 		function META:GetBoundingBox()
@@ -891,19 +905,30 @@ do -- components
 			local mins, maxs = self:GetBoundingBox()
 
 			local m = self.entity.transform:GetMatrix() * Matrix()
+			--m:Translate(LerpVector(0.5, mins, maxs))
 
-			local ratio = mins - maxs
+			if self.angle_offset and self.angle_offset ~= Angle(0,0,0) then
+				mins = mins * 1
+				maxs = maxs * 1
+				local a = self.angle_offset*1
+				a:RotateAroundAxis(Vector(0,1,0), -90)
+				mins:Rotate(a)
+				maxs:Rotate(a)
+			end
 
-			m:Translate(LerpVector(0.5, mins, maxs))
+			local s = m:GetScale()
 
-			local scale = -ratio/2
+			local mmins = Matrix()
+			mmins:Translate(mins * s)
 
-			local s1 = m:GetScale()*-scale
-			local s2 = m:GetScale()*scale
+			local mmaxs = Matrix()
+			mmaxs:Translate(maxs * s)
 
-			return
-				m:GetTranslation() + s1,
-				m:GetTranslation() + s2
+			mmins = mmins * m
+			mmaxs = mmaxs * m
+
+
+			return mmins:GetTranslation(), mmaxs:GetTranslation()
 		end
 
 		function META:GetWorldSpaceCenter()
@@ -990,7 +1015,6 @@ do -- components
 			min = min - m:GetTranslation()
 			max = max - m:GetTranslation()
 
-
 			return camera.IntersectRayWithOBB(
 				m:GetTranslation(), m:GetAngles(),
 				min, max
@@ -1009,11 +1033,9 @@ do -- components
 		function META:Start()
 			pac999_models = pac999_models or {}
 			self.Model = ClientsideModel("error.mdl")
-			if not self.Model:IsValid() then
-				error("uh oh")
-			end
 			table.insert(pac999_models, self.Model)
 			self.Model:SetNoDraw(true)
+			self.model_set = false
 		end
 
 		function META:SetIgnoreZ(b)
@@ -1021,6 +1043,7 @@ do -- components
 		end
 
 		function META:Render3D()
+			if not self.model_set then return end
 			local mdl = self.Model
 			local world = self.entity.transform:GetMatrix()
 
@@ -1051,6 +1074,7 @@ do -- components
 				local data = models.GetMeshInfo(self.Model:GetModel())
 				self.entity.bounding_box:SetBoundingBox(data.min, data.max, data.angle_offset)
 			end
+			self.model_set = true
 		end
 
 		function META:Finish()
@@ -1211,7 +1235,7 @@ do -- components
 						self.entity.transform:SetWorldMatrix(m)
 					end
 
-					local model = "models/hunter/misc/squarecap1x1x1.mdl"
+					local model = "models/hunter/misc/cone1x1.mdl"
 
 					self.x_axis = create_grab(self, model, Vector(1,0,0)*dist, function(component)
 						local m = self.entity.transform:GetMatrix()
