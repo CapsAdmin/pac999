@@ -1,14 +1,21 @@
+local TEST = true
+
 if pac999_models then
+	hook.Remove("RenderScene", "pac_999")
+	hook.Remove("PostDrawOpaqueRenderables", "pac_999")
+
 	for k,v in pairs(pac999_models) do
 		SafeRemoveEntity(v)
 	end
+	pac999_models = nil
 end
-
 
 _G.pac999 = _G.pac999 or {}
 local pac999 = _G.pac999
 
 do
+	local table_remove = table.remove
+
 	local utility = {}
 
 	do
@@ -34,6 +41,48 @@ do
 					hooks[id] = nil
 				end
 			end
+		end
+
+		function utility.CreateObjectPool(name)
+			return {
+				i = 1,
+				list = {},
+				map = {},
+				remove = function(self, obj)
+					if not self.map[obj] then
+						error("tried to remove non existing object in pool " .. name, 2)
+					end
+
+					for i = 1, self.i do
+						if obj == self.list[i] then
+							table_remove(self.list, i)
+							self.map[obj] = nil
+							self.i = self.i - 1
+							break
+						end
+					end
+
+					if self.map[obj] then
+						error("unable to remove " .. tostring(obj) .. " from pool " .. name)
+					end
+				end,
+				insert = function(self, obj)
+					if self.map[obj] then
+						error("tried to add existing object to pool " .. name, 2)
+					end
+
+					self.list[self.i] = obj
+					self.map[obj] = self.i
+					self.i = self.i + 1
+				end,
+				call = function(self, func_name, ...)
+					for _, obj in ipairs(self.list) do
+						if obj[func_name] then
+							obj[func_name](obj, ...)
+						end
+					end
+				end,
+			}
 		end
 	end
 
@@ -94,8 +143,10 @@ do
 	function input.Update()
 		local inputs = {}
 
-		for i, v in ipairs(pac999.object.active) do
-			inputs[i] = v
+		for i, v in ipairs(pac999.entity.entity_pool.list) do
+			if v.input then
+				table.insert(inputs, v)
+			end
 		end
 
 		table.sort(inputs, sort_by_camera_distance)
@@ -141,6 +192,9 @@ do
 		end
 	end
 
+	hook.Add("RenderScene", "pac_999", function()
+		pac999.input.Update()
+	end)
 
 	pac999.input = input
 end
@@ -258,12 +312,13 @@ do
 end
 
 do
-	local object = {}
-	object.registered = {}
-	object.factories = {}
+	local utility = pac999.utility
 
-	object.active = {}
-	object.active_components = {}
+	local entity = {}
+	entity.component_templates = {}
+
+	entity.entity_pool = utility.CreateObjectPool("entities")
+	entity.component_pools = {}
 
 	local function table_remove_value(tbl, val)
 		for i, v in ipairs(tbl) do
@@ -297,7 +352,7 @@ do
 				table.insert(names, component.ClassName)
 			end
 
-			return "object" .. "[" .. table.concat(names, ",") .. "]" .. "[" .. self.Identifier .. "]"
+			return "entity" .. "[" .. table.concat(names, ",") .. "]" .. "[" .. self.Identifier .. "]"
 		end
 
 		function META:FireEvent(name, ...)
@@ -344,11 +399,11 @@ do
 				self:RemoveComponent(component.ClassName)
 			end
 
-			table_remove_value(object.active, self)
+			entity.entity_pool:remove(self)
 		end
 
 		function META:AddComponent(name)
-			local meta = assert(object.registered[name])
+			local meta = assert(entity.component_templates[name])
 			self[name] = setmetatable({}, meta)
 			table.insert(self.Components, self[name])
 
@@ -356,7 +411,7 @@ do
 				self:AddEvent(event_name, callback, "metatable_" .. name)
 			end
 
-			table.insert(object.active_components[meta.ClassName], self[name])
+			entity.component_pools[meta.ClassName]:insert(self[name])
 		end
 
 		function META:RemoveComponent(name)
@@ -365,15 +420,15 @@ do
 			self[name] = nil
 
 
-			for event_name in pairs(object.registered[name].EVENTS) do
-				print(self:RemoveEvent(event_name, "metatable_" .. name))
+			for event_name in pairs(entity.component_templates[name].EVENTS) do
+				self:RemoveEvent(event_name, "metatable_" .. name)
 			end
 
 			table_remove_value(self.Components, component)
-			table_remove_value(object.active_components[component.ClassName], component)
+			entity.component_pools[component.ClassName]:remove(component)
 		end
 
-		function object.Template(name, required)
+		function entity.Template(name, required)
 			local META = {}
 			META.ClassName = name
 			META.EVENTS = {}
@@ -381,17 +436,18 @@ do
 			META.__index = META
 
 			function META:Register()
-				object.Register(self)
+				entity.Register(self)
 			end
 
 			return META
 		end
 
-		function object.Register(META)
+		function entity.Register(META)
 			assert(META.ClassName)
 
-			object.active_components[META.ClassName] = object.active_components[META.ClassName] or {}
-			object.registered[META.ClassName] = META
+			entity.component_pools[META.ClassName] = entity.component_pools[META.ClassName] or utility.CreateObjectPool(META.ClassName)
+
+			entity.component_templates[META.ClassName] = META
 		end
 
 		local function get_metatables(component_names, metatables, done)
@@ -399,7 +455,7 @@ do
 			done = done or {}
 
 			for _, name in ipairs(component_names) do
-				local meta = object.registered[name]
+				local meta = entity.component_templates[name]
 
 				if not meta then
 					error(name .. " is an unknown component")
@@ -420,7 +476,7 @@ do
 
 		local ref = 0
 
-		function object.Create(component_names)
+		function entity.Create(component_names)
 			local self = setmetatable({
 				Components = {},
 				events = {},
@@ -435,18 +491,58 @@ do
 
 			self:FireEvent("Start")
 
-			table.insert(object.active, self)
+			entity.entity_pool:insert(self)
 
 			return self
 		end
 	end
 
-	pac999.object = object
+	if TEST then
+		local events = {}
+
+		do
+			local META = entity.Template("test")
+
+			function META.EVENTS:Start()
+				table.insert(events, "start")
+			end
+
+			function META.EVENTS:Update()
+				table.insert(events, "update")
+			end
+
+			function META.EVENTS:Finish()
+				table.insert(events, "finish")
+			end
+
+			META:Register()
+		end
+
+		do
+			local obj = entity.Create({"test"})
+			obj:FireEvent("Update")
+			obj:FireEvent("Update")
+			obj:Remove()
+
+			assert(events[1] == "start")
+			assert(events[2] == "update")
+			assert(events[3] == "update")
+			assert(events[4] == "finish")
+		end
+
+		do
+			assert(#entity.entity_pool.list == 0)
+			local a = entity.Create({"test"})
+			assert(#entity.entity_pool.list == 1)
+		end
+	end
+
+	pac999.entity = entity
 end
 
 do -- components
 	do -- scene node
-		local META = pac999.object.Template("node")
+		local META = pac999.entity.Template("node")
 
 		function META.EVENTS:Start()
 			self.Children = {}
@@ -532,7 +628,7 @@ do -- components
 	do -- transform
 		local utility = pac999.utility
 
-		local META = pac999.object.Template("transform")
+		local META = pac999.entity.Template("transform")
 
 		function META.EVENTS:Start()
 			self.Transform = Matrix()
@@ -544,15 +640,13 @@ do -- components
 		function META.EVENTS:Finish()
 			if not IsValid(self.Entity) then return end
 
-			utility.ObjectFunctionHook("pac999", ent, "CalcAbsolutePosition")
+			--utility.ObjectFunctionHook("pac999", ent, "CalcAbsolutePosition")
 		end
 
 		function META:SetEntity(ent)
 			self.Entity = ent
 
-			utility.ObjectFunctionHook("pac999", ent, "CalcAbsolutePosition", function()
-
-			end)
+			--utility.ObjectFunctionHook("pac999", ent, "CalcAbsolutePosition", function() end)
 		end
 
 		function META:InvalidateMatrix()
@@ -632,7 +726,7 @@ do -- components
 	do -- bounding box
 		local utility = pac999.utility
 
-		local META = pac999.object.Template("bounding_box", {"transform", "node"})
+		local META = pac999.entity.Template("bounding_box", {"transform", "node"})
 
 		function META.EVENTS:Update()
 			local min, max = self:GetWorldSpaceBoundingBoxChildren()
@@ -717,7 +811,7 @@ do -- components
 	do -- input
 		local camera = pac999.camera
 
-		local META = pac999.object.Template("input", {"transform", "bounding_box"})
+		local META = pac999.entity.Template("input", {"transform", "bounding_box"})
 
 		function META:SetIgnoreZ(b)
 			self.IgnoreZ = b
@@ -754,11 +848,14 @@ do -- components
 		local utility = pac999.utility
 		local models = pac999.models
 
-		local META = pac999.object.Template("model")
+		local META = pac999.entity.Template("model")
 
 		function META.EVENTS:Start()
 			pac999_models = pac999_models or {}
-			self.Model = ents.CreateClientProp()
+			self.Model = ClientsideModel("error.mdl")
+			if not self.Model:IsValid() then
+				error("uh oh")
+			end
 			table.insert(pac999_models, self.Model)
 			self.Model:SetNoDraw(true)
 		end
@@ -767,7 +864,7 @@ do -- components
 			self.IgnoreZ = b
 		end
 
-		function META.EVENTS:Render3D()
+		function META:Render3D()
 			local mdl = self.Model
 			local world = self:GetMatrix()
 
@@ -807,10 +904,18 @@ do -- components
 		end
 
 		META:Register()
+
+		hook.Add("PostDrawOpaqueRenderables", "pac_999", function()
+			for _, obj in ipairs(pac999.entity.entity_pool.list) do
+				if obj.Render3D then
+					obj:Render3D()
+				end
+			end
+		end)
 	end
 
 	do -- gizmo
-		local META = pac999.object.Template("gizmo")
+		local META = pac999.entity.Template("gizmo")
 
 		function META.EVENTS:Update()
 			if self.center_grab then
@@ -867,7 +972,7 @@ do -- components
 end
 
 do
-	local object = pac999.object
+	local entity = pac999.entity
 
 	local scene = {}
 
@@ -880,12 +985,12 @@ do
 		"gizmo"
 	}
 
-	scene.world = object.Create(components)
+	scene.world = entity.Create(components)
 
 	function scene.AddNode(parent)
 		parent = parent or scene.world
 
-		local node = object.Create(components)
+		local node = entity.Create(components)
 		parent:AddChild(node)
 
 		return node
@@ -893,6 +998,8 @@ do
 
 	pac999.scene = scene
 end
+
+local me = LocalPlayer()
 
 if me then
 	local root = pac999.scene.AddNode()
@@ -905,22 +1012,13 @@ if me then
 		root = node
 	end
 
-	for name, objects in pairs(pac999.object.active) do
-		print(name, #objects)
+	for name, objects in pairs(pac999.entity.entity_pool.list) do
+--		print(name, #objects)
 	end
 
 	hook.Add("RenderScene", "pac_999", function()
-		pac999.input.Update()
-
-		for _, obj in ipairs(pac999.object.active) do
+		for _, obj in ipairs(pac999.entity.entity_pool.list) do
 			obj:FireEvent("Update")
 		end
 	end)
-
-	hook.Add("PostDrawOpaqueRenderables", "pac_999", function()
-		for _, obj in ipairs(pac999.object.active) do
-			obj:FireEvent("Render3D")
-		end
-	end)
-
 end
