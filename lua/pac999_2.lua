@@ -1107,7 +1107,7 @@ do -- components
 			obj:SetIgnoreZ(true)
 			obj:RemoveComponent("gizmo")
 			obj:SetModel(mdl)
-			obj:SetPosition(pos)
+			obj:SetPosition(self:GetCenter() + pos)
 
 			if on_grab then
 				obj:AddEvent("Pointer", function(component, hovered, grabbed)
@@ -1122,7 +1122,12 @@ do -- components
 			return obj
 		end
 
+		function META:GetCenter()
+			return self.entity.bounding_box:GetWorldSpaceCenter() - self.entity:GetMatrix():GetTranslation()
+		end
+
 		function META:EnableGizmo(b)
+
 			if b then
 				local dist = 75
 
@@ -1143,7 +1148,7 @@ do -- components
 						local plane_pos = line_plane_intersection(
 							vector_origin,
 							right,
-							pac999.camera.GetViewMatrix():GetTranslation() - pos,
+							pac999.camera.GetViewMatrix():GetTranslation() - pos - self:GetCenter(),
 							pac999.camera.GetViewRay()
 						)
 
@@ -1175,8 +1180,9 @@ do -- components
 						a[roll_component] = roll * (mul or 1)
 
 						local _, newang = LocalToWorld(vector_origin, a, vector_origin, ang)
-
+						m:Translate(self:GetCenter())
 						m:SetAngles(newang)
+						m:Translate(-self:GetCenter())
 
 						self.entity.transform:SetWorldMatrix(m)
 					end
