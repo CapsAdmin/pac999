@@ -392,8 +392,16 @@ do
 			for _, component in ipairs(self.Components) do
 				for key, val in pairs(getmetatable(component)) do
 					if not blacklist[key] and type(val) == "function" then
-						self.ComponentFunctions[key] = function(ent, ...)
-							component[key](component, ...)
+						local old = self.ComponentFunctions[key]
+						if old then
+							self.ComponentFunctions[key] = function(ent, ...)
+								old(ent, ...)
+								component[key](component, ...)
+							end
+						else
+							self.ComponentFunctions[key] = function(ent, ...)
+								component[key](component, ...)
+							end
 						end
 					end
 				end
@@ -488,6 +496,10 @@ do
 			META.EVENTS = {}
 			META.RequiredComponents = required
 			META.__index = META
+
+			function META:__tostring()
+				return "component[" .. self.ClassName .. "]"
+			end
 
 			function META:Register()
 				entity.Register(self)
@@ -616,6 +628,14 @@ do
 
 			META:Register()
 
+			local META = entity.ComponentTemplate("test2")
+
+			function META:SetFoo(b)
+				self.FooBar = b
+			end
+
+			META:Register()
+
 			local ent = entity.Create()
 			local cmp = ent:AddComponent("test")
 			assert(cmp.FooBar == true)
@@ -624,6 +644,12 @@ do
 
 			ent:SetFoo("bar")
 			assert(cmp.FooBar == "bar")
+
+			ent:AddComponent("test2")
+			ent:SetFoo("noyesthat")
+
+			assert(ent.test.FooBar == "noyesthat")
+			assert(ent.test2.FooBar == "noyesthat")
 
 			ent:Remove()
 		end
