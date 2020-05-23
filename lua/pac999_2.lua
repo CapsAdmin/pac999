@@ -1140,7 +1140,7 @@ do -- components
 				end)
 
 				do
-					local function calc_axis(matrix, roll_component, right, deg, mul)
+					local function calc_axis(matrix, roll_component, right, deg, mul, start_plane_pos)
 						local m = matrix * Matrix()
 						local pos = m:GetTranslation()
 						local ang = m:GetAngles()
@@ -1154,8 +1154,7 @@ do -- components
 
 						if not plane_pos then return end
 
-
-						local diffang = (pos - (plane_pos + pos)):Angle()
+						local diffang = ((pos - ((plane_pos) + pos))):Angle()
 						diffang:RotateAroundAxis(right, deg)
 
 						local _, localang = WorldToLocal(vector_origin, diffang, vector_origin, ang)
@@ -1187,17 +1186,56 @@ do -- components
 						self.entity.transform:SetWorldMatrix(m)
 					end
 
-					local disc = "models/hunter/tubes/circle2x2c.mdl"
+					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
 
 					self.x_axis_angle = create_grab(self, disc, Vector(1,0,0)*dist/2, function(component)
-						local m = self.entity.transform:GetMatrix()
+						local m = self.entity.transform:GetMatrix() * Matrix()
+						--local plane_pos = m:GetTranslation() - self.entity.input:GetHitPosition()
+
+						local lol = m * Matrix()
+						lol:Translate(self:GetCenter())
+						local start_plane_pos = lol:GetTranslation()
 
 						return function()
-							calc_axis(m, "p", m:GetRight(), 180)
+
+							local m2 = self.entity.transform:GetMatrix() * Matrix()
+
+							debugoverlay.Cross(start_plane_pos, 4, 0, Color(0,255,0,255), true)
+
+							local localpos = util.IntersectRayWithPlane(
+								pac999.camera.GetViewMatrix():GetTranslation(),
+								pac999.camera.GetViewRay(),
+								m:GetTranslation(),
+								m:GetRight()
+							)
+
+							local localpos = line_plane_intersection(
+								vector_origin,
+								m:GetRight(),
+								pac999.camera.GetViewMatrix():GetTranslation() - start_plane_pos,
+								pac999.camera.GetViewRay()
+							)
+
+							local pos = m:GetTranslation()
+							local ang = m:GetAngles()
+							local diffang = (pos - (localpos + pos)):Angle()
+							diffang:RotateAroundAxis(m:GetRight(), 180)
+
+							--print(diffang)
+
+							local _, localang = WorldToLocal(vector_origin, diffang, vector_origin, ang)
+							local _, newang = LocalToWorld(vector_origin, Angle(math.NormalizeAngle(localang.p + localang.y), 0, 0), vector_origin, ang)
+
+							local m = m * Matrix()
+							m:Translate(self:GetCenter())
+							m:SetAngles(newang)
+							m:Translate(-self:GetCenter())
+							self.entity.transform:SetWorldMatrix(m)
+							--calc_axis(m, "p", m:GetRight(), 180, 1)
 						end
 					end)
-					self.x_axis_angle:SetAngles(Angle(0,180,90))
-					self.x_axis_angle:SetLocalScale(Vector(1,1,1)*0.15)
+					self.x_axis_angle:SetAngles(Angle(45,180,90))
+					self.x_axis_angle:SetLocalScale(Vector(1,1,1)*0.25)
 
 					self.y_axis_angle = create_grab(self, disc, Vector(0,1,0)*dist/2, function(component)
 						local m = self.entity.transform:GetMatrix()
@@ -1206,8 +1244,8 @@ do -- components
 							calc_axis(m, "y", m:GetUp(), 90, -1)
 						end
 					end)
-					self.y_axis_angle:SetAngles(Angle(0,-90,0))
-					self.y_axis_angle:SetLocalScale(Vector(1,1,1)*0.15)
+					self.y_axis_angle:SetAngles(Angle(0,-90 - 45,0))
+					self.y_axis_angle:SetLocalScale(Vector(1,1,1)*0.25)
 
 					self.z_axis_angle = create_grab(self, disc, Vector(0,0,1)*dist/2, function(component)
 						local m = self.entity.transform:GetMatrix()
@@ -1216,27 +1254,26 @@ do -- components
 							calc_axis(m, "r", m:GetForward(), 180, 1)
 						end
 					end)
-					self.z_axis_angle:SetAngles(Angle(90,0,0))
-					self.z_axis_angle:SetLocalScale(Vector(1,1,1)*0.15)
+					self.z_axis_angle:SetAngles(Angle(90 +45,90,90))
+					self.z_axis_angle:SetLocalScale(Vector(1,1,1)*0.25)
 				end
 
 
 				do
-					local function calc_axis(matrix, forward, right, cmp)
+					local function calc_axis(matrix, forward, right, start_plane_pos, cmp)
 						local m = matrix * Matrix()
 						local pos = m:GetTranslation()
-						local hacky_offset = self.entity.transform:GetMatrix():GetTranslation() - cmp.transform:GetMatrix():GetTranslation()
 
 						local plane_pos = line_plane_intersection(
 							vector_origin,
 							right,
-							pac999.camera.GetViewMatrix():GetTranslation() - pos + hacky_offset,
+							pac999.camera.GetViewMatrix():GetTranslation() - pos,
 							pac999.camera.GetViewRay()
 						)
 
 						if not plane_pos then return end
 
-						m:SetTranslation(pos + forward * plane_pos:Dot(forward))
+						m:SetTranslation(pos + forward * (plane_pos - start_plane_pos):Dot(forward))
 
 						self.entity.transform:SetWorldMatrix(m)
 					end
@@ -1246,8 +1283,15 @@ do -- components
 					self.x_axis = create_grab(self, model, Vector(1,0,0)*dist, function(component)
 						local m = self.entity.transform:GetMatrix()
 
+						local plane_pos = line_plane_intersection(
+							vector_origin,
+							m:GetRight(),
+							pac999.camera.GetViewMatrix():GetTranslation() - m:GetTranslation(),
+							pac999.camera.GetViewRay()
+						)
+
 						return function()
-							calc_axis(m, m:GetForward(), m:GetRight(), component)
+							calc_axis(m, m:GetForward(), m:GetRight(), plane_pos, component)
 						end
 					end)
 					self.x_axis:SetAngles(Angle(90,0,0))
@@ -1257,8 +1301,15 @@ do -- components
 					self.y_axis = create_grab(self, model, Vector(0,1,0)*dist, function(component)
 						local m = self.entity.transform:GetMatrix()
 
+						local plane_pos = line_plane_intersection(
+							vector_origin,
+							m:GetForward(),
+							pac999.camera.GetViewMatrix():GetTranslation() - m:GetTranslation(),
+							pac999.camera.GetViewRay()
+						)
+
 						return function()
-							calc_axis(m, m:GetRight(), m:GetForward(), component)
+							calc_axis(m, m:GetRight(), m:GetForward(), plane_pos, component)
 						end
 					end)
 					self.y_axis:SetAngles(Angle(0,0,-90))
@@ -1267,8 +1318,15 @@ do -- components
 					self.z_axis = create_grab(self, model, Vector(0,0,1)*dist, function(component)
 						local m = self.entity.transform:GetMatrix()
 
+						local plane_pos = line_plane_intersection(
+							vector_origin,
+							m:GetRight(),
+							pac999.camera.GetViewMatrix():GetTranslation() - m:GetTranslation(),
+							pac999.camera.GetViewRay()
+						)
+
 						return function()
-							calc_axis(m, m:GetUp(), m:GetRight(), component)
+							calc_axis(m, m:GetUp(), m:GetRight(), plane_pos, component)
 						end
 					end)
 					self.z_axis:SetAngles(Angle(0,0,0))
