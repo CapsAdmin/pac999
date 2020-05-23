@@ -180,6 +180,8 @@ do
 				end
 
 				--obj:FireEvent("MouseOver", hit_pos, normal, fraction)
+				obj:SetHitPosition(hit_pos)
+				obj:SetHitNormal(normal)
 				obj:SetPointerOver(true)
 				obj:SetPointerDown(input.IsGrabbing())
 
@@ -396,11 +398,11 @@ do
 						if old then
 							self.ComponentFunctions[key] = function(ent, ...)
 								old(ent, ...)
-								component[key](component, ...)
+								return component[key](component, ...)
 							end
 						else
 							self.ComponentFunctions[key] = function(ent, ...)
-								component[key](component, ...)
+								return component[key](component, ...)
 							end
 						end
 					end
@@ -818,6 +820,14 @@ do -- components
 			self:InvalidateMatrix()
 		end
 
+		function META:GetWorldPosition()
+			return self:GetMatrix():GetTranslation()
+		end
+
+		function META:GetLocalPosition()
+			return self.Transform:GetTranslation()
+		end
+
 		function META:SetAngles(a)
 			self.Transform:SetAngles(a)
 			self:InvalidateMatrix()
@@ -830,6 +840,7 @@ do -- components
 
 		function META:SetLocalScale(v)
 			self.LocalScaleTransform:Scale(v)
+			self.LOL = true
 			self:InvalidateMatrix()
 		end
 
@@ -880,6 +891,7 @@ do -- components
 			local mins, maxs = self:GetBoundingBox()
 
 			local m = self.entity.transform:GetMatrix() * Matrix()
+
 			local ratio = mins - maxs
 
 			m:Translate(LerpVector(0.5, mins, maxs))
@@ -952,11 +964,32 @@ do -- components
 			end
 		end
 
+		function META:SetHitNormal(vec)
+			self.HitNormal = vec
+		end
+
+		function META:GetHitNormal()
+			return self.HitNormal
+		end
+
+
+		function META:SetHitPosition(vec)
+			self.HitPosition = vec
+		end
+
+		function META:GetHitPosition()
+			return self.HitPosition
+		end
+
 		function META:CameraRayIntersect()
 			if not rawget(self.entity, "bounding_box") then return end
 
 			local m = self.entity.transform:GetMatrix()
-			local min, max = self.entity.bounding_box:GetBoundingBox()
+			local min, max = self.entity.bounding_box:GetWorldSpaceBoundingBox()
+
+			min = min - m:GetTranslation()
+			max = max - m:GetTranslation()
+
 
 			return camera.IntersectRayWithOBB(
 				m:GetTranslation(), m:GetAngles(),
@@ -1036,51 +1069,191 @@ do -- components
 	end
 
 	do -- gizmo
-		local META = pac999.entity.ComponentTemplate("gizmo")
-
-		function META.EVENTS:Update()
-			if self.center_grab then
-				self.entity.transform:SetWorldMatrix(pac999.camera.GetViewMatrix() * self.center_grab)
-			end
+		local function line_plane_intersection(p, n, lp, ln)
+			local d = p:Dot(n)
+			local t = d - lp:Dot(n) / ln:Dot(n)
+			if t < 0 then return end
+			return lp + ln * t
 		end
 
-		local function create_grab(self, pos)
+		local META = pac999.entity.ComponentTemplate("gizmo")
+
+		local function create_grab(self, mdl, pos, on_grab)
 			local obj = pac999.scene.AddNode(self.entity)
 			obj:SetIgnoreZ(true)
 			obj:RemoveComponent("gizmo")
-			obj:SetModel("models/hunter/blocks/cube025x025x025.mdl")
+			obj:SetModel(mdl)
 			obj:SetPosition(pos)
+
+			if on_grab then
+				obj:AddEvent("Pointer", function(component, hovered, grabbed)
+					if grabbed then
+						obj:AddEvent("Update", on_grab(obj), obj)
+					else
+						obj:RemoveEvent("Update", obj)
+					end
+				end)
+			end
+
 			return obj
 		end
 
 		function META:EnableGizmo(b)
 			if b then
-				local dist = 50
+				local dist = 75
 
-				local c = create_grab(self, Vector(0,0,0))
-				c:AddEvent("Pointer", function(component, hovered, grabbed)
-					self.center_grab = grabbed and pac999.camera.GetViewMatrix():GetInverse() * self.entity.transform:GetMatrix() or nil
+				self.center_axis = create_grab(self, "models/hunter/misc/sphere025x025.mdl", Vector(0,0,0), function()
+					local m = pac999.camera.GetViewMatrix():GetInverse() * self.entity.transform:GetMatrix()
+
+					return function()
+						self.entity.transform:SetWorldMatrix(pac999.camera.GetViewMatrix() * m)
+					end
 				end)
-				self.center_axis = c
 
-				local x = create_grab(self, Vector(1,0,0)*dist)
-				self.x_axis = x
+				do
+					local function calc_axis(matrix, roll_component, right, deg, mul)
+						local m = matrix * Matrix()
+						local pos = m:GetTranslation()
+						local ang = m:GetAngles()
 
-				local y = create_grab(self, Vector(0,1,0)*dist)
-				self.y_axis = y
+						local plane_pos = line_plane_intersection(
+							vector_origin,
+							right,
+							pac999.camera.GetViewMatrix():GetTranslation() - pos,
+							pac999.camera.GetViewRay()
+						)
 
-				local z = create_grab(self, Vector(0,0,1)*dist)
-				self.z_axis = z
+						if not plane_pos then return end
+
+
+						local diffang = (pos - (plane_pos + pos)):Angle()
+						diffang:RotateAroundAxis(right, deg)
+
+						local _, localang = WorldToLocal(vector_origin, diffang, vector_origin, ang)
+
+						local roll
+
+						if roll_component == "r" then
+							roll = math.NormalizeAngle(localang.y + localang.p) + 180
+
+							if localang.y == 90 then
+								roll = math.NormalizeAngle(-roll - 180)
+							end
+						else
+							roll = math.NormalizeAngle(localang.y + localang.p)
+
+							if localang.y < -1 or localang.y > 1 then
+								roll = -roll
+							end
+						end
+
+						local a = Angle(0,0,0)
+						a[roll_component] = roll * (mul or 1)
+
+						local _, newang = LocalToWorld(vector_origin, a, vector_origin, ang)
+
+						m:SetAngles(newang)
+
+						self.entity.transform:SetWorldMatrix(m)
+					end
+
+					local disc = "models/hunter/tubes/circle2x2c.mdl"
+
+					self.x_axis_angle = create_grab(self, disc, Vector(1,0,0)*dist/2, function(component)
+						local m = self.entity.transform:GetMatrix()
+
+						return function()
+							calc_axis(m, "p", m:GetRight(), 180)
+						end
+					end)
+					self.x_axis_angle:SetAngles(Angle(0,180,90))
+					self.x_axis_angle:SetLocalScale(Vector(1,1,1)*0.15)
+
+					self.y_axis_angle = create_grab(self, disc, Vector(0,1,0)*dist/2, function(component)
+						local m = self.entity.transform:GetMatrix()
+
+						return function()
+							calc_axis(m, "y", m:GetUp(), 90, -1)
+						end
+					end)
+					self.y_axis_angle:SetAngles(Angle(0,-90,0))
+					self.y_axis_angle:SetLocalScale(Vector(1,1,1)*0.15)
+
+					self.z_axis_angle = create_grab(self, disc, Vector(0,0,1)*dist/2, function(component)
+						local m = self.entity.transform:GetMatrix()
+
+						return function()
+							calc_axis(m, "r", m:GetForward(), 180, 1)
+						end
+					end)
+					self.z_axis_angle:SetAngles(Angle(90,0,0))
+					self.z_axis_angle:SetLocalScale(Vector(1,1,1)*0.15)
+				end
+
+
+				do
+					local function calc_axis(matrix, forward, right, cmp)
+						local m = matrix * Matrix()
+						local pos = m:GetTranslation()
+						local hacky_offset = self.entity.transform:GetMatrix():GetTranslation() - cmp.transform:GetMatrix():GetTranslation()
+
+						local plane_pos = line_plane_intersection(
+							vector_origin,
+							right,
+							pac999.camera.GetViewMatrix():GetTranslation() - pos + hacky_offset,
+							pac999.camera.GetViewRay()
+						)
+
+						if not plane_pos then return end
+
+						m:SetTranslation(pos + forward * plane_pos:Dot(forward))
+
+						self.entity.transform:SetWorldMatrix(m)
+					end
+
+					local model = "models/hunter/misc/squarecap1x1x1.mdl"
+
+					self.x_axis = create_grab(self, model, Vector(1,0,0)*dist, function(component)
+						local m = self.entity.transform:GetMatrix()
+
+						return function()
+							calc_axis(m, m:GetForward(), m:GetRight(), component)
+						end
+					end)
+					self.x_axis:SetAngles(Angle(90,0,0))
+					self.x_axis:SetLocalScale(Vector(1,1,1)*0.25)
+
+
+					self.y_axis = create_grab(self, model, Vector(0,1,0)*dist, function(component)
+						local m = self.entity.transform:GetMatrix()
+
+						return function()
+							calc_axis(m, m:GetRight(), m:GetForward(), component)
+						end
+					end)
+					self.y_axis:SetAngles(Angle(0,0,-90))
+					self.y_axis:SetLocalScale(Vector(1,1,1)*0.25)
+
+					self.z_axis = create_grab(self, model, Vector(0,0,1)*dist, function(component)
+						local m = self.entity.transform:GetMatrix()
+
+						return function()
+							calc_axis(m, m:GetUp(), m:GetRight(), component)
+						end
+					end)
+					self.z_axis:SetAngles(Angle(0,0,0))
+					self.z_axis:SetLocalScale(Vector(1,1,1)*0.25)
+				end
 			else
 				if self.center_axis then
-					print(#pac999.entity.GetAllComponents("input"))
-
 					self.center_axis:Remove()
 					self.x_axis:Remove()
 					self.y_axis:Remove()
 					self.z_axis:Remove()
 
-					print(#pac999.entity.GetAllComponents("input"))
+					self.x_axis_angle:Remove()
+					self.y_axis_angle:Remove()
+					self.z_axis_angle:Remove()
 				end
 			end
 			self.gizmoenabled = b
