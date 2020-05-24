@@ -1173,7 +1173,7 @@ do -- components
 
 			if b then
 				local dist = 75
-				local thickness = 0.05
+				local thickness = 0.5
 				self.center_axis = create_grab(
 					self,
 					"models/hunter/misc/sphere025x025.mdl",
@@ -1248,7 +1248,7 @@ do -- components
 								visual:RemoveComponent("input")
 								visual:SetModel("models/hunter/tubes/tube4x4x025.mdl")
 								visual:SetPosition(self:GetCenter())
-								visual:SetLocalScale(Vector(1,1,thickness)*visual_size)
+								visual:SetLocalScale(Vector(1,1,thickness/5)*visual_size)
 
 								visual:SetMaterial(white_mat)
 								visual:SetColor(color_white)
@@ -1368,7 +1368,7 @@ do -- components
 								visual:SetMaterial(white_mat)
 								visual:SetColor(color_white)
 								visual:SetAlpha(1)
-								visual:SetLocalScale(Vector(thickness,thickness,32000))
+								visual:SetLocalScale(Vector(thickness/25,thickness/25,32000))
 
 								ent:AddEvent("Finish", function()
 									visual:Remove()
