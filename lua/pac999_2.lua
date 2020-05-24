@@ -1140,111 +1140,74 @@ do -- components
 				end)
 
 				do
-					local function calc_axis(matrix, roll_component, right, deg, mul, center_pos)
-						local m = matrix * Matrix()
-						local pos = m:GetTranslation()
-						local ang = m:GetAngles()
-
-						local plane_pos = line_plane_intersection(
-							vector_origin,
-							right,
-							pac999.camera.GetViewMatrix():GetTranslation() - pos - self:GetCenter(),
-							pac999.camera.GetViewRay()
-						)
-
-						if not plane_pos then return end
-
-						local diffang = ((pos - ((plane_pos) + pos))):Angle()
-						diffang:RotateAroundAxis(right, deg)
-
-						local _, local_angles = WorldToLocal(vector_origin, diffang, vector_origin, ang)
-
-						local roll
-
-						if roll_component == "r" then
-							roll = math.NormalizeAngle(local_angles.y + local_angles.p) + 180
-
-							if local_angles.y == 90 then
-								roll = math.NormalizeAngle(-roll - 180)
-							end
-						else
-							roll = math.NormalizeAngle(local_angles.y + local_angles.p)
-
-							if local_angles.y < -1 or local_angles.y > 1 then
-								roll = -roll
-							end
-						end
-
-						local a = Angle(0,0,0)
-						a[roll_component] = roll * (mul or 1)
-
-						local _, newang = LocalToWorld(vector_origin, a, vector_origin, ang)
-						m:Translate(self:GetCenter())
-						m:SetAngles(newang)
-						m:Translate(-self:GetCenter())
-
-						self.entity.transform:SetWorldMatrix(m)
-					end
-
 					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
 
-					self.x_axis_angle = create_grab(self, disc, Vector(1,0,0)*dist/2, function(component)
-						local m = self.entity.transform:GetMatrix() * Matrix()
-						--local plane_pos = m:GetTranslation() - self.entity.input:GetHitPosition()
+					local function build_callback(axis, fixup_callback)
+						return function(component)
+							local m = self.entity.transform:GetMatrix() * Matrix()
 
-						local temp = m * Matrix()
-						temp:Translate(self:GetCenter())
-						local center_pos = temp:GetTranslation()
+							local temp = m * Matrix()
+							temp:Translate(self:GetCenter())
+							local center_pos = temp:GetTranslation()
 
-						return function()
-							local plane_pos = util.IntersectRayWithPlane(
-								pac999.camera.GetViewMatrix():GetTranslation(),
-								pac999.camera.GetViewRay(),
-								center_pos,
-								m:GetRight()
-							)
+							return function()
+								local plane_pos = util.IntersectRayWithPlane(
+									pac999.camera.GetViewMatrix():GetTranslation(),
+									pac999.camera.GetViewRay(),
+									center_pos,
+									m[axis](m)
+								)
 
-							if not plane_pos then return end
-							debugoverlay.Cross(plane_pos, 8, 0)
+								if not plane_pos then return end
 
-							local rot = Matrix()
-							rot:SetAngles((plane_pos - center_pos):Angle())
+								local rot = Matrix()
+								rot:SetAngles((plane_pos - center_pos):Angle())
 
-							local local_angles = (m:GetInverse() * rot):GetAngles()
+								local local_angles = (m:GetInverse() * rot):GetAngles()
 
-							-- not sure why we have to do this
-							-- if not, the entire model inverts when it
-							-- reaches 180 deg around the rotation
-							local_angles.r = -local_angles.y
 
-							local m = m * Matrix()
-							m:Translate(self:GetCenter())
-							m:Rotate(local_angles)
-							m:Translate(-self:GetCenter())
-							self.entity.transform:SetWorldMatrix(m)
-							--calc_axis(m, "p", m:GetRight(), 180, 1)
+								-- TODO: figure out why we need to fixup the local angles
+
+								-- not sure why we have to do this
+								-- if not, the entire model inverts when it
+								-- reaches 180 deg around the rotation
+								fixup_callback(local_angles)
+
+								local m = m * Matrix()
+								m:Translate(self:GetCenter())
+								m:Rotate(local_angles)
+								m:Translate(-self:GetCenter())
+
+								self.entity.transform:SetWorldMatrix(m)
+							end
 						end
-					end)
+					end
+
+					self.x_axis_angle = create_grab(self, disc, Vector(1,0,0)*dist/2, build_callback("GetRight", function(local_angles)
+						local_angles.r = -local_angles.y
+					end))
 					self.x_axis_angle:SetAngles(Angle(45,180,90))
 					self.x_axis_angle:SetLocalScale(Vector(1,1,1)*0.25)
 
-					self.y_axis_angle = create_grab(self, disc, Vector(0,1,0)*dist/2, function(component)
-						local m = self.entity.transform:GetMatrix()
-
-						return function()
-							calc_axis(m, "y", m:GetUp(), 90, -1)
-						end
-					end)
+					self.y_axis_angle = create_grab(self, disc, Vector(0,1,0)*dist/2, build_callback("GetUp", function(local_angles)
+						local_angles.r = -local_angles.p
+						local_angles.y = local_angles.y - 90
+					end))
 					self.y_axis_angle:SetAngles(Angle(0,-90 - 45,0))
 					self.y_axis_angle:SetLocalScale(Vector(1,1,1)*0.25)
 
-					self.z_axis_angle = create_grab(self, disc, Vector(0,0,1)*dist/2, function(component)
-						local m = self.entity.transform:GetMatrix()
+					self.z_axis_angle = create_grab(self, disc, Vector(0,0,1)*dist/2, build_callback("GetForward", function(local_angles)
+						-- this one is realy weird
+						local p = local_angles.p
 
-						return function()
-							calc_axis(m, "r", m:GetForward(), 180, 1)
+						if local_angles.y > 0 then
+							p = -p + 180
 						end
-					end)
+
+						local_angles.r = -90 + p
+						local_angles.p = 180
+						local_angles.y = 180
+					end))
 					self.z_axis_angle:SetAngles(Angle(90 +45,90,90))
 					self.z_axis_angle:SetLocalScale(Vector(1,1,1)*0.25)
 				end
