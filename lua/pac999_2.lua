@@ -378,7 +378,13 @@ do
 				table.insert(names, component.ClassName)
 			end
 
-			return "entity" .. "[" .. table.concat(names, ",") .. "]" .. "[" .. self.Identifier .. "]"
+			return self.Name .. "[" .. table.concat(names, ",") .. "]" .. "[" .. self.Identifier .. "]"
+		end
+
+		META.Name = "entity"
+
+		function META:SetName(str)
+			rawset(self, "Name", str)
 		end
 
 		function META:Remove()
@@ -516,7 +522,14 @@ do
 			META.__index = META
 
 			function META:__tostring()
-				return "component[" .. self.ClassName .. "]"
+				local name = self.entity.Name
+				if name == "entity" then
+					name = ""
+				else
+					name = name .. ": "
+				end
+
+				return name .. "component[" .. self.ClassName .. "]"
 			end
 
 			function META:Register()
@@ -774,6 +787,37 @@ do -- components
 			self.ScaleTransform = Matrix()
 			self.LocalScaleTransform = Matrix()
 			self.Matrix = Matrix()
+
+
+			self.Translation = Matrix()
+			self.Rotation = Matrix()
+			self.Scale = Vector(1,1,1)
+
+			self.CageMax = Vector(1,1,1)*0
+			self.CageMin = Vector(1,1,1)*0
+
+			self.TRScale = Vector(1,1,1)
+		end
+
+		function META:SetCageMin(val)
+			self.CageMin = val
+		end
+
+		function META:SetCageMax(val)
+			self.CageMax = val
+
+			--local center = LerpVector(0.5, self.CageMin, self.CageMax)
+			--self.CageMin = self.CageMin - center
+			--self.CageMax = self.CageMax - center
+		end
+
+		function META:GetCageCenter()
+			return LerpVector(0.5, self.CageMin, self.CageMax)
+		end
+
+		function META:GetCageMinMax()
+			local center = self:GetCageCenter()
+			return self.CageMin - center, self.CageMax - center
 		end
 
 		function META:Finish()
@@ -792,8 +836,10 @@ do -- components
 			if self.InvalidMatrix then return end
 
 			self.InvalidMatrix = true
+			self._Scale = nil
 
 			for _, child in ipairs(self.entity.node:GetAllChildren()) do
+				child.entity.transform._Scale = nil
 				child.entity.transform.InvalidMatrix = true
 			end
 		end
@@ -804,25 +850,64 @@ do -- components
 				self.InvalidMatrix = false
 			end
 
+			if false then
+				debugoverlay.Text(self.Matrix:GetTranslation(), tostring(self), 0)
+				debugoverlay.Cross(self.Matrix:GetTranslation(), 2, 0, Color(0,255,0), true)
+
+				local min, max = self:GetCageMinMax()
+
+				debugoverlay.BoxAngles(
+					self.Matrix:GetTranslation(),
+					min * self.Matrix:GetScale(),
+					max * self.Matrix:GetScale(),
+					self.Matrix:GetAngles(),
+					0,
+					Color(0,255,0,0),
+					true
+				)
+			end
+
+
 			return self.Matrix
 		end
 
+		-- translation
+		-- rotation
+		-- scale
+
+		--
+
 		function META:BuildMatrix()
-			local tr = self.ScaleTransform * self.Transform
+			local tr = self.Transform * Matrix()
+
+			if self.TRScale then
+				tr:SetTranslation(tr:GetTranslation() * self.TRScale)
+			end
 
 			if self.Entity then
 				tr = self.Entity:GetWorldTransformMatrix() * tr
 			end
 
-			if self.entity.node.Parent then
-				tr = self.entity.node.Parent.entity.transform:GetMatrix() * tr
+			local parent = self.entity.node.Parent
+
+			if parent then
+				parent = parent.entity.transform
+
+				tr = parent:GetMatrix() * tr
+
+				self._Scale = self:GetScale() * parent:GetScale()
 			end
 
 			---tr:Translate(LerpVector(0.5, self:OBBMins(), self:OBBMaxs()))
 
 			tr:SetScale(self.LocalScaleTransform:GetScale())
+			tr:Scale(self._Scale)
 
 			return tr
+		end
+
+		function META:GetScale()
+			return self._Scale or self.Scale *  self.TRScale
 		end
 
 		function META:SetWorldMatrix(m)
@@ -850,7 +935,12 @@ do -- components
 		end
 
 		function META:SetScale(v)
-			self.ScaleTransform:Scale(v)
+			self.Scale = v
+			self:InvalidateMatrix()
+		end
+
+		function META:SetTRScale(v)
+			self.TRScale = v
 			self:InvalidateMatrix()
 		end
 
@@ -900,7 +990,8 @@ do -- components
 		end
 
 		function META:GetBoundingBox()
-			return self.Min, self.Max
+			local center = self:GetCenter()
+			return self.Min - center, self.Max - center
 		end
 
 		-- TODO: rotation doesn't work properly
@@ -936,6 +1027,10 @@ do -- components
 
 		function META:GetWorldSpaceCenter()
 			return LerpVector(0.5, self:GetWorldSpaceBoundingBox())
+		end
+
+		function META:GetCenter()
+			return LerpVector(0.5, self.Min, self.Max)
 		end
 
 		function META:GetBoundingRadius()
@@ -1057,7 +1152,11 @@ do -- components
 			end
 
 			local m = world * Matrix()
+			m:Translate(-self.entity.transform:GetCageCenter())
 			mdl:SetRenderOrigin(m:GetTranslation())
+
+			debugoverlay.Cross(m:GetTranslation(), 2, 0, Color(255,0,0), true)
+
 			m:SetTranslation(vector_origin)
 			mdl:EnableMatrix("RenderMultiply", m)
 			mdl:SetupBones()
@@ -1102,10 +1201,18 @@ do -- components
 
 		function META:SetModel(mdl)
 			self.Model:SetModel(mdl)
+
+			local data = models.GetMeshInfo(self.Model:GetModel())
+
 			if self.entity.bounding_box then
-				local data = models.GetMeshInfo(self.Model:GetModel())
 				self.entity.bounding_box:SetBoundingBox(data.min, data.max, data.angle_offset)
 			end
+
+			if self.entity.transform then
+				self.entity.transform:SetCageMin(data.min)
+				self.entity.transform:SetCageMax(data.max)
+			end
+
 			self.model_set = true
 		end
 
@@ -1138,7 +1245,7 @@ do -- components
 
 			["$basetexture"] = "color/white",
 			--["$model"] = "1",
-			--["$nocull"] = "0",
+			["$nocull"] = "1",
 			--["$translucent"] = "0",
 			--["$vertexcolor"] = "1",
 			--["$vertexalpha"] = "1",
@@ -1206,10 +1313,10 @@ do -- components
 					self.center_axis = ent
 				end
 
-				do
+				if true then
 					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
 					local dist = dist * 0.5
-					local visual_size = 0.4
+					local visual_size = 0.32
 					local scale = 0.25
 
 					local function build_callback(axis, fixup_callback, invert)
@@ -1301,7 +1408,6 @@ do -- components
 
 						ent:SetAngles(gizmo_angle)
 						ent:SetLocalScale(Vector(1,1,thickness)*scale)
-						ent:SetScale(Vector(1,1,1))
 						ent:SetColor(gizmo_color)
 
 						local ent = create_grab(self, disc, dir*dist/2, build_callback(axis, fixup_callback, -1))
@@ -1310,11 +1416,8 @@ do -- components
 						ent:SetLocalScale(Vector(1,1,thickness)*scale)
 
 						-- this inverts the translation as well
-						if axis == "GetForward" then
-							ent:SetScale(Vector(-1,1,-1))
-						else
-							ent:SetScale(Vector(-1,-1,1))
-						end
+
+						ent:SetTRScale(Vector(-1,-1,-1))
 						ent:SetColor(gizmo_color)
 					end
 
@@ -1346,6 +1449,7 @@ do -- components
 					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
 					local visual_size = 0.6
 					local scale = 0.25
+					local dist = dist * 0.5
 
 					local model = "models/hunter/misc/cone1x1.mdl"
 
@@ -1366,7 +1470,7 @@ do -- components
 								local pos = m:GetTranslation()
 
 								local plane_pos = util.IntersectRayWithPlane(
-									pac999.camera.GetViewMatrix():GetTranslation() - pos,
+									(pac999.camera.GetViewMatrix():GetTranslation() - pos),
 									pac999.camera.GetViewRay(),
 									vector_origin,
 									m[axis](m)
@@ -1376,7 +1480,7 @@ do -- components
 
 								local m = m * Matrix()
 								local dir = m[axis2](m)
-								m:SetTranslation(pos + dir * (plane_pos - center_pos):Dot(dir))
+								m:SetTranslation(pos + dir * ((plane_pos - center_pos)):Dot(dir))
 								self.entity.transform:SetWorldMatrix(m)
 							end
 						end,
@@ -1435,12 +1539,8 @@ do -- components
 						ent:SetAngles(gizmo_angle)
 						ent:SetLocalScale(Vector(1,1,1)*0.25)
 						ent:SetColor(gizmo_color)
+						ent:SetTRScale(Vector(-1,-1,-1))
 
-						if axis2 == "GetUp" then
-							ent:SetScale(Vector(1,-1,-1))
-						else
-							ent:SetScale(Vector(-1,-1,1))
-						end
 						return ent
 					end
 
@@ -1561,15 +1661,40 @@ end
 local me = LocalPlayer()
 
 if me then
-	local root = pac999.scene.AddNode()
-	root:SetPosition(Vector(1000, -500, 1000))
+	local world = pac999.scene.AddNode()
+	world:SetName("world")
+	world:SetPosition(Vector(1015, -736, 512))
 
-	for i = 1, 10 do
-		local node = pac999.scene.AddNode(root)
-		node:SetPosition(Vector(50, 0 ,0))
-		node:SetModel("models/props_c17/furnitureStove001a.mdl")
-		root = node
+	do
+		local root = world
+		local i = 1
+		local n = function(x,y,z)
+			local node = pac999.scene.AddNode(root)
+			node:SetName(i)
+			i = i + 1
+			node:SetPosition(Vector(x,y,z))
+			node:SetModel("models/props_trainstation/Ceiling_Arch001a.mdl")
+			return node
+		end
+
+		n(0, 80, 60):SetTRScale(Vector(-1,-1,1))
+		n(0, 0, 60):SetScale(Vector(1,1,1)*2)
+
+		for i = 1, 1 do
+--			root = n(0, 0, 60)
+		end
 	end
+
+	world:SetTRScale(Vector(1,1,1))
+--	world:SetScale(Vector(1,1,1)/3)
+
+	timer.Simple(0, function()
+		for i,v in ipairs(world:GetAllChildrenAndSelf()) do
+			print(i, v.entity.transform, v.entity.transform.Scale, v.entity.transform._Scale)
+		end
+	end)
+
+	print("!")
 
 	for name, objects in pairs(pac999.entity.GetAll()) do
 --		print(name, #objects)
