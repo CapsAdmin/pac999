@@ -461,6 +461,10 @@ do
 			self:BuildAccessibleComponentFunctions()
 		end
 
+		function META:HasComponent(name)
+			return rawget(self, name) ~= nil
+		end
+
 		do
 			function META:FireEvent(name, ...)
 				if not self.events[name] then return false end
@@ -1047,7 +1051,7 @@ do -- components
 			local mdl = self.Model
 			local world = self.entity.transform:GetMatrix()
 
-			if self.entity.input.Hovered then
+			if self.entity:HasComponent("input") and self.entity.input.Hovered then
 				render.SetColorModulation(5,5,5)
 			else
 				render.SetColorModulation(1,1,1)
@@ -1102,7 +1106,7 @@ do -- components
 
 		local META = pac999.entity.ComponentTemplate("gizmo")
 
-		local function create_grab(self, mdl, pos, on_grab)
+		local function create_grab(self, mdl, pos, on_grab, on_grab2)
 			local obj = pac999.scene.AddNode(self.entity)
 			obj:SetIgnoreZ(true)
 			obj:RemoveComponent("gizmo")
@@ -1115,6 +1119,9 @@ do -- components
 						obj:AddEvent("Update", on_grab(obj), obj)
 					else
 						obj:RemoveEvent("Update", obj)
+					end
+					if on_grab2 then
+						on_grab2(obj, grabbed)
 					end
 				end)
 			end
@@ -1143,7 +1150,7 @@ do -- components
 					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
 
 					local function build_callback(axis, fixup_callback)
-						return function(component)
+						return function(ent)
 							local m = self.entity.transform:GetMatrix() * Matrix()
 
 							local temp = m * Matrix()
@@ -1180,6 +1187,40 @@ do -- components
 
 								self.entity.transform:SetWorldMatrix(m)
 							end
+						end,
+						function(ent, grabbed)
+							if self["visual_axis_" .. axis] then
+								self["visual_axis_" .. axis]:Remove()
+								self["visual_axis_" .. axis] = nil
+							end
+
+							if grabbed then
+								local visual = pac999.scene.AddNode(self.entity)
+								visual:SetIgnoreZ(true)
+								visual:RemoveComponent("gizmo")
+								visual:RemoveComponent("input")
+								visual:SetModel("models/hunter/tubes/tube4x4x025.mdl")
+								visual:SetPosition(self:GetCenter())
+								visual:SetLocalScale(Vector(1,1,1)*0.6)
+
+								ent:AddEvent("Finish", function()
+									visual:Remove()
+								end, "visual")
+
+								local a
+
+								if axis == "GetRight" then
+									a = Angle(0,0,90)
+								elseif axis == "GetUp" then
+									a = Angle(0,0,0)
+								elseif axis == "GetForward" then
+									a = Angle(90,0,0)
+								end
+								visual:SetAngles(a)
+
+								self["visual_axis_" .. axis] = visual
+							end
+
 						end
 					end
 
@@ -1214,75 +1255,48 @@ do -- components
 
 
 				do
-					local function calc_axis(matrix, forward, right, center_pos, cmp)
-						local m = matrix * Matrix()
-						local pos = m:GetTranslation()
-
-						local plane_pos = line_plane_intersection(
-							vector_origin,
-							right,
-							pac999.camera.GetViewMatrix():GetTranslation() - pos,
-							pac999.camera.GetViewRay()
-						)
-
-						if not plane_pos then return end
-
-						m:SetTranslation(pos + forward * (plane_pos - center_pos):Dot(forward))
-
-						self.entity.transform:SetWorldMatrix(m)
-					end
-
 					local model = "models/hunter/misc/cone1x1.mdl"
 
-					self.x_axis = create_grab(self, model, Vector(1,0,0)*dist, function(component)
-						local m = self.entity.transform:GetMatrix()
+					local function build_callback(axis, axis2)
+						return function(component)
+							local m = self.entity.transform:GetMatrix()
 
-						local plane_pos = line_plane_intersection(
-							vector_origin,
-							m:GetRight(),
-							pac999.camera.GetViewMatrix():GetTranslation() - m:GetTranslation(),
-							pac999.camera.GetViewRay()
-						)
+							local center_pos = util.IntersectRayWithPlane(
+								pac999.camera.GetViewMatrix():GetTranslation() - m:GetTranslation(),
+								pac999.camera.GetViewRay(),
+								vector_origin,
+								m[axis](m)
+							)
 
-						return function()
-							calc_axis(m, m:GetForward(), m:GetRight(), plane_pos, component)
+							return function()
+								local pos = m:GetTranslation()
+
+								local plane_pos = util.IntersectRayWithPlane(
+									pac999.camera.GetViewMatrix():GetTranslation() - pos,
+									pac999.camera.GetViewRay(),
+									vector_origin,
+									m[axis](m)
+								)
+
+								if not plane_pos then return end
+
+								local m = m * Matrix()
+								local dir = m[axis2](m)
+								m:SetTranslation(pos + dir * (plane_pos - center_pos):Dot(dir))
+								self.entity.transform:SetWorldMatrix(m)
+							end
 						end
-					end)
+					end
+
+					self.x_axis = create_grab(self, model, Vector(1,0,0)*dist, build_callback("GetRight", "GetForward"))
 					self.x_axis:SetAngles(Angle(90,0,0))
 					self.x_axis:SetLocalScale(Vector(1,1,1)*0.25)
 
-
-					self.y_axis = create_grab(self, model, Vector(0,1,0)*dist, function(component)
-						local m = self.entity.transform:GetMatrix()
-
-						local plane_pos = line_plane_intersection(
-							vector_origin,
-							m:GetForward(),
-							pac999.camera.GetViewMatrix():GetTranslation() - m:GetTranslation(),
-							pac999.camera.GetViewRay()
-						)
-
-						return function()
-							calc_axis(m, m:GetRight(), m:GetForward(), plane_pos, component)
-						end
-					end)
+					self.y_axis = create_grab(self, model, Vector(0,1,0)*dist, build_callback("GetForward", "GetRight"))
 					self.y_axis:SetAngles(Angle(0,0,-90))
 					self.y_axis:SetLocalScale(Vector(1,1,1)*0.25)
 
-					self.z_axis = create_grab(self, model, Vector(0,0,1)*dist, function(component)
-						local m = self.entity.transform:GetMatrix()
-
-						local plane_pos = line_plane_intersection(
-							vector_origin,
-							m:GetRight(),
-							pac999.camera.GetViewMatrix():GetTranslation() - m:GetTranslation(),
-							pac999.camera.GetViewRay()
-						)
-
-						return function()
-							calc_axis(m, m:GetUp(), m:GetRight(), plane_pos, component)
-						end
-					end)
+					self.z_axis = create_grab(self, model, Vector(0,0,1)*dist, build_callback("GetRight", "GetUp"))
 					self.z_axis:SetAngles(Angle(0,0,0))
 					self.z_axis:SetLocalScale(Vector(1,1,1)*0.25)
 				end
