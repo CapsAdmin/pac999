@@ -1126,12 +1126,22 @@ do -- components
 
 	do -- gizmo
 		local white_mat = CreateMaterial("pac999_white_" .. math.random(), "VertexLitGeneric", {
+
+			["$bumpmap"] = "effects/flat_normal",
+			--["$halflambert"] = 1,
+
+			["$phong"] = "1",
+			["$phongboost"] = "1" ,
+			["$phongfresnelranges"] = "[2 5 10]",
+			["$phongexponent"] = "100",
+
+
 			["$basetexture"] = "color/white",
-			["$model"] = "1",
-			["$nocull"] = "0",
-			["$translucent"] = "0",
-			["$vertexcolor"] = "1",
-			["$vertexalpha"] = "1",
+			--["$model"] = "1",
+			--["$nocull"] = "0",
+			--["$translucent"] = "0",
+			--["$vertexcolor"] = "1",
+			--["$vertexalpha"] = "1",
 		})
 
 		local META = pac999.entity.ComponentTemplate("gizmo")
