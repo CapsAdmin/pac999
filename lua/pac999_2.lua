@@ -1116,7 +1116,10 @@ do -- components
 			if on_grab then
 				obj:AddEvent("Pointer", function(component, hovered, grabbed)
 					if grabbed then
-						obj:AddEvent("Update", on_grab(obj), obj)
+						local cb = on_grab(obj)
+						if cb then
+							obj:AddEvent("Update", cb, obj)
+						end
 					else
 						obj:RemoveEvent("Update", obj)
 					end
@@ -1148,6 +1151,9 @@ do -- components
 
 				do
 					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
+					local dist = dist * 0.5
+					local visual_size = 0.6
+					local scale = 0.25
 
 					local function build_callback(axis, fixup_callback)
 						return function(ent)
@@ -1189,9 +1195,10 @@ do -- components
 							end
 						end,
 						function(ent, grabbed)
-							if self["visual_axis_" .. axis] then
-								self["visual_axis_" .. axis]:Remove()
-								self["visual_axis_" .. axis] = nil
+							local key = "visual_angle_axis_" .. axis
+							if self[key] then
+								self[key]:Remove()
+								self[key] = nil
 							end
 
 							if grabbed then
@@ -1201,7 +1208,7 @@ do -- components
 								visual:RemoveComponent("input")
 								visual:SetModel("models/hunter/tubes/tube4x4x025.mdl")
 								visual:SetPosition(self:GetCenter())
-								visual:SetLocalScale(Vector(1,1,1)*0.6)
+								visual:SetLocalScale(Vector(1,1,1)*visual_size)
 
 								ent:AddEvent("Finish", function()
 									visual:Remove()
@@ -1218,26 +1225,26 @@ do -- components
 								end
 								visual:SetAngles(a)
 
-								self["visual_axis_" .. axis] = visual
+								self[key] = visual
 							end
 
 						end
 					end
 
-					self.x_axis_angle = create_grab(self, disc, Vector(1,0,0)*dist/2, build_callback("GetRight", function(local_angles)
+					self.x_axis_angle = create_grab(self, disc, Vector(1,0,0)*dist, build_callback("GetRight", function(local_angles)
 						local_angles.r = -local_angles.y
 					end))
 					self.x_axis_angle:SetAngles(Angle(45,180,90))
-					self.x_axis_angle:SetLocalScale(Vector(1,1,1)*0.25)
+					self.x_axis_angle:SetLocalScale(Vector(1,1,1)*scale)
 
-					self.y_axis_angle = create_grab(self, disc, Vector(0,1,0)*dist/2, build_callback("GetUp", function(local_angles)
+					self.y_axis_angle = create_grab(self, disc, Vector(0,1,0)*dist, build_callback("GetUp", function(local_angles)
 						local_angles.r = -local_angles.p
 						local_angles.y = local_angles.y - 90
 					end))
 					self.y_axis_angle:SetAngles(Angle(0,-90 - 45,0))
-					self.y_axis_angle:SetLocalScale(Vector(1,1,1)*0.25)
+					self.y_axis_angle:SetLocalScale(Vector(1,1,1)*scale)
 
-					self.z_axis_angle = create_grab(self, disc, Vector(0,0,1)*dist/2, build_callback("GetForward", function(local_angles)
+					self.z_axis_angle = create_grab(self, disc, Vector(0,0,1)*dist, build_callback("GetForward", function(local_angles)
 						-- this one is realy weird
 						local p = local_angles.p
 
@@ -1250,11 +1257,15 @@ do -- components
 						local_angles.y = 180
 					end))
 					self.z_axis_angle:SetAngles(Angle(90 +45,90,90))
-					self.z_axis_angle:SetLocalScale(Vector(1,1,1)*0.25)
+					self.z_axis_angle:SetLocalScale(Vector(1,1,1)*scale)
 				end
 
 
 				do
+					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
+					local visual_size = 0.6
+					local scale = 0.25
+
 					local model = "models/hunter/misc/cone1x1.mdl"
 
 					local function build_callback(axis, axis2)
@@ -1267,6 +1278,8 @@ do -- components
 								vector_origin,
 								m[axis](m)
 							)
+
+							if not center_pos then return end
 
 							return function()
 								local pos = m:GetTranslation()
@@ -1285,6 +1298,43 @@ do -- components
 								m:SetTranslation(pos + dir * (plane_pos - center_pos):Dot(dir))
 								self.entity.transform:SetWorldMatrix(m)
 							end
+						end,
+						function(ent, grabbed)
+							local axis = axis2
+							local key = "visual_move_axis_" .. axis
+							if self[key] then
+								self[key]:Remove()
+								self[key] = nil
+							end
+
+
+							if grabbed then
+								local visual = pac999.scene.AddNode(self.entity)
+								visual:SetIgnoreZ(true)
+								visual:RemoveComponent("gizmo")
+								visual:RemoveComponent("input")
+								visual:SetModel("models/hunter/blocks/cube025x025x025.mdl")
+								visual:SetPosition(self:GetCenter())
+								visual:SetLocalScale(Vector(0.1,0.1,32000))
+
+								ent:AddEvent("Finish", function()
+									visual:Remove()
+								end, "visual")
+
+								local a
+
+								if axis == "GetRight" then
+									a = Angle(0,0,90)
+								elseif axis == "GetUp" then
+									a = Angle(0,0,0)
+								elseif axis == "GetForward" then
+									a = Angle(90,0,0)
+								end
+								visual:SetAngles(a)
+
+								self[key] = visual
+							end
+
 						end
 					end
 
