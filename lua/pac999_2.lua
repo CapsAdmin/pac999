@@ -1066,10 +1066,39 @@ do -- components
 			if self.IgnoreZ then
 				cam.IgnoreZ(true)
 			end
+
+			if self.Material then
+				if self.Color then
+					render.SetColorModulation(self.Color.r/255, self.Color.g/255, self.Color.b/255)
+				end
+
+				if self.Alpha then
+					self.Material:SetFloat("$alpha", self.Alpha)
+				end
+
+				render.MaterialOverride(self.Material)
+			end
+
 			mdl:DrawModel()
+
+			if self.Material then
+				render.MaterialOverride()
+			end
 			if self.IgnoreZ then
 				cam.IgnoreZ(false)
 			end
+		end
+
+		function META:SetMaterial(mat)
+			self.Material = mat
+		end
+
+		function META:SetColor(val)
+			self.Color = val
+		end
+
+		function META:SetAlpha(val)
+			self.Alpha = val
 		end
 
 		function META:SetModel(mdl)
@@ -1097,12 +1126,14 @@ do -- components
 	end
 
 	do -- gizmo
-		local function line_plane_intersection(p, n, lp, ln)
-			local d = p:Dot(n)
-			local t = d - lp:Dot(n) / ln:Dot(n)
-			if t < 0 then return end
-			return lp + ln * t
-		end
+		local white_mat = CreateMaterial("pac999_white_" .. math.random(), "VertexLitGeneric", {
+			["$basetexture"] = "color/white",
+			["$model"] = "1",
+			["$nocull"] = "0",
+			["$translucent"] = "0",
+			["$vertexcolor"] = "1",
+			["$vertexalpha"] = "1",
+		})
 
 		local META = pac999.entity.ComponentTemplate("gizmo")
 
@@ -1112,6 +1143,8 @@ do -- components
 			obj:RemoveComponent("gizmo")
 			obj:SetModel(mdl)
 			obj:SetPosition(self:GetCenter() + pos)
+			obj:SetMaterial(white_mat)
+			obj:SetAlpha(1)
 
 			if on_grab then
 				obj:AddEvent("Pointer", function(component, hovered, grabbed)
@@ -1140,14 +1173,21 @@ do -- components
 
 			if b then
 				local dist = 75
+				local thickness = 0.05
+				self.center_axis = create_grab(
+					self,
+					"models/hunter/misc/sphere025x025.mdl",
+					Vector(0,0,0),
+					function()
+						local m = pac999.camera.GetViewMatrix():GetInverse() * self.entity.transform:GetMatrix()
 
-				self.center_axis = create_grab(self, "models/hunter/misc/sphere025x025.mdl", Vector(0,0,0), function()
-					local m = pac999.camera.GetViewMatrix():GetInverse() * self.entity.transform:GetMatrix()
-
-					return function()
-						self.entity.transform:SetWorldMatrix(pac999.camera.GetViewMatrix() * m)
+						return function()
+							self.entity.transform:SetWorldMatrix(pac999.camera.GetViewMatrix() * m)
+						end
 					end
-				end)
+				)
+
+				self.center_axis:SetColor(Color(255,255,0))
 
 				do
 					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
@@ -1208,7 +1248,11 @@ do -- components
 								visual:RemoveComponent("input")
 								visual:SetModel("models/hunter/tubes/tube4x4x025.mdl")
 								visual:SetPosition(self:GetCenter())
-								visual:SetLocalScale(Vector(1,1,1)*visual_size)
+								visual:SetLocalScale(Vector(1,1,thickness)*visual_size)
+
+								visual:SetMaterial(white_mat)
+								visual:SetColor(color_white)
+								visual:SetAlpha(1)
 
 								ent:AddEvent("Finish", function()
 									visual:Remove()
@@ -1218,10 +1262,13 @@ do -- components
 
 								if axis == "GetRight" then
 									a = Angle(0,0,90)
+									visual:SetColor(Color(255,0,0))
 								elseif axis == "GetUp" then
 									a = Angle(0,0,0)
+									visual:SetColor(Color(0,255,0))
 								elseif axis == "GetForward" then
 									a = Angle(90,0,0)
+									visual:SetColor(Color(0,0,255))
 								end
 								visual:SetAngles(a)
 
@@ -1235,14 +1282,16 @@ do -- components
 						local_angles.r = -local_angles.y
 					end))
 					self.x_axis_angle:SetAngles(Angle(45,180,90))
-					self.x_axis_angle:SetLocalScale(Vector(1,1,1)*scale)
+					self.x_axis_angle:SetLocalScale(Vector(1,1,thickness)*scale)
+					self.x_axis_angle:SetColor(Color(255,0,0))
 
 					self.y_axis_angle = create_grab(self, disc, Vector(0,1,0)*dist, build_callback("GetUp", function(local_angles)
 						local_angles.r = -local_angles.p
 						local_angles.y = local_angles.y - 90
 					end))
 					self.y_axis_angle:SetAngles(Angle(0,-90 - 45,0))
-					self.y_axis_angle:SetLocalScale(Vector(1,1,1)*scale)
+					self.y_axis_angle:SetLocalScale(Vector(1,1,thickness)*scale)
+					self.y_axis_angle:SetColor(Color(0,255,0))
 
 					self.z_axis_angle = create_grab(self, disc, Vector(0,0,1)*dist, build_callback("GetForward", function(local_angles)
 						-- this one is realy weird
@@ -1257,7 +1306,8 @@ do -- components
 						local_angles.y = 180
 					end))
 					self.z_axis_angle:SetAngles(Angle(90 +45,90,90))
-					self.z_axis_angle:SetLocalScale(Vector(1,1,1)*scale)
+					self.z_axis_angle:SetLocalScale(Vector(1,1,thickness)*scale)
+					self.z_axis_angle:SetColor(Color(0,0,255))
 				end
 
 
@@ -1315,7 +1365,10 @@ do -- components
 								visual:RemoveComponent("input")
 								visual:SetModel("models/hunter/blocks/cube025x025x025.mdl")
 								visual:SetPosition(self:GetCenter())
-								visual:SetLocalScale(Vector(0.1,0.1,32000))
+								visual:SetMaterial(white_mat)
+								visual:SetColor(color_white)
+								visual:SetAlpha(1)
+								visual:SetLocalScale(Vector(thickness,thickness,32000))
 
 								ent:AddEvent("Finish", function()
 									visual:Remove()
@@ -1325,10 +1378,13 @@ do -- components
 
 								if axis == "GetRight" then
 									a = Angle(0,0,90)
+									visual:SetColor(Color(0,255,0))
 								elseif axis == "GetUp" then
 									a = Angle(0,0,0)
+									visual:SetColor(Color(0,0,255))
 								elseif axis == "GetForward" then
 									a = Angle(90,0,0)
+									visual:SetColor(Color(255,0,0))
 								end
 								visual:SetAngles(a)
 
@@ -1341,14 +1397,18 @@ do -- components
 					self.x_axis = create_grab(self, model, Vector(1,0,0)*dist, build_callback("GetRight", "GetForward"))
 					self.x_axis:SetAngles(Angle(90,0,0))
 					self.x_axis:SetLocalScale(Vector(1,1,1)*0.25)
+					self.x_axis:SetColor(Color(255,0,0))
 
 					self.y_axis = create_grab(self, model, Vector(0,1,0)*dist, build_callback("GetForward", "GetRight"))
 					self.y_axis:SetAngles(Angle(0,0,-90))
 					self.y_axis:SetLocalScale(Vector(1,1,1)*0.25)
+					self.y_axis:SetColor(Color(0,255,0))
 
 					self.z_axis = create_grab(self, model, Vector(0,0,1)*dist, build_callback("GetRight", "GetUp"))
 					self.z_axis:SetAngles(Angle(0,0,0))
 					self.z_axis:SetLocalScale(Vector(1,1,1)*0.25)
+					self.z_axis:SetColor(Color(0,0,255))
+
 				end
 			else
 				if self.center_axis then
