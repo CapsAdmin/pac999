@@ -1140,7 +1140,7 @@ do -- components
 				end)
 
 				do
-					local function calc_axis(matrix, roll_component, right, deg, mul, start_plane_pos)
+					local function calc_axis(matrix, roll_component, right, deg, mul, center_pos)
 						local m = matrix * Matrix()
 						local pos = m:GetTranslation()
 						local ang = m:GetAngles()
@@ -1157,20 +1157,20 @@ do -- components
 						local diffang = ((pos - ((plane_pos) + pos))):Angle()
 						diffang:RotateAroundAxis(right, deg)
 
-						local _, localang = WorldToLocal(vector_origin, diffang, vector_origin, ang)
+						local _, local_angles = WorldToLocal(vector_origin, diffang, vector_origin, ang)
 
 						local roll
 
 						if roll_component == "r" then
-							roll = math.NormalizeAngle(localang.y + localang.p) + 180
+							roll = math.NormalizeAngle(local_angles.y + local_angles.p) + 180
 
-							if localang.y == 90 then
+							if local_angles.y == 90 then
 								roll = math.NormalizeAngle(-roll - 180)
 							end
 						else
-							roll = math.NormalizeAngle(localang.y + localang.p)
+							roll = math.NormalizeAngle(local_angles.y + local_angles.p)
 
-							if localang.y < -1 or localang.y > 1 then
+							if local_angles.y < -1 or local_angles.y > 1 then
 								roll = -roll
 							end
 						end
@@ -1192,43 +1192,34 @@ do -- components
 						local m = self.entity.transform:GetMatrix() * Matrix()
 						--local plane_pos = m:GetTranslation() - self.entity.input:GetHitPosition()
 
-						local lol = m * Matrix()
-						lol:Translate(self:GetCenter())
-						local start_plane_pos = lol:GetTranslation()
+						local temp = m * Matrix()
+						temp:Translate(self:GetCenter())
+						local center_pos = temp:GetTranslation()
 
 						return function()
-
-							local m2 = self.entity.transform:GetMatrix() * Matrix()
-
-							debugoverlay.Cross(start_plane_pos, 4, 0, Color(0,255,0,255), true)
-
-							local localpos = util.IntersectRayWithPlane(
+							local plane_pos = util.IntersectRayWithPlane(
 								pac999.camera.GetViewMatrix():GetTranslation(),
 								pac999.camera.GetViewRay(),
-								m:GetTranslation(),
+								center_pos,
 								m:GetRight()
 							)
 
-							local localpos = line_plane_intersection(
-								vector_origin,
-								m:GetRight(),
-								pac999.camera.GetViewMatrix():GetTranslation() - start_plane_pos,
-								pac999.camera.GetViewRay()
-							)
+							if not plane_pos then return end
+							debugoverlay.Cross(plane_pos, 8, 0)
 
-							local pos = m:GetTranslation()
-							local ang = m:GetAngles()
-							local diffang = (pos - (localpos + pos)):Angle()
-							diffang:RotateAroundAxis(m:GetRight(), 180)
+							local rot = Matrix()
+							rot:SetAngles((plane_pos - center_pos):Angle())
 
-							--print(diffang)
+							local local_angles = (m:GetInverse() * rot):GetAngles()
 
-							local _, localang = WorldToLocal(vector_origin, diffang, vector_origin, ang)
-							local _, newang = LocalToWorld(vector_origin, Angle(math.NormalizeAngle(localang.p + localang.y), 0, 0), vector_origin, ang)
+							-- not sure why we have to do this
+							-- if not, the entire model inverts when it
+							-- reaches 180 deg around the rotation
+							local_angles.r = -local_angles.y
 
 							local m = m * Matrix()
 							m:Translate(self:GetCenter())
-							m:SetAngles(newang)
+							m:Rotate(local_angles)
 							m:Translate(-self:GetCenter())
 							self.entity.transform:SetWorldMatrix(m)
 							--calc_axis(m, "p", m:GetRight(), 180, 1)
@@ -1260,7 +1251,7 @@ do -- components
 
 
 				do
-					local function calc_axis(matrix, forward, right, start_plane_pos, cmp)
+					local function calc_axis(matrix, forward, right, center_pos, cmp)
 						local m = matrix * Matrix()
 						local pos = m:GetTranslation()
 
@@ -1273,7 +1264,7 @@ do -- components
 
 						if not plane_pos then return end
 
-						m:SetTranslation(pos + forward * (plane_pos - start_plane_pos):Dot(forward))
+						m:SetTranslation(pos + forward * (plane_pos - center_pos):Dot(forward))
 
 						self.entity.transform:SetWorldMatrix(m)
 					end
