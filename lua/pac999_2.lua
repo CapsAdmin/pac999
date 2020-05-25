@@ -1453,6 +1453,10 @@ do -- components
 
 					local model = "models/hunter/misc/cone1x1.mdl"
 
+					local function div(a,b)
+						return Vector(a.x / b.x, a.y / b.y, a.z / b.z)
+					end
+
 					local function build_callback(axis, axis2)
 						return function(component)
 							local m = self.entity.transform:GetMatrix()
@@ -1479,7 +1483,7 @@ do -- components
 								if not plane_pos then return end
 
 								local m = m * Matrix()
-								local dir = m[axis2](m)
+								local dir = div(m[axis2](m), m:GetScale())
 								m:SetTranslation(pos + dir * ((plane_pos - center_pos)):Dot(dir))
 								self.entity.transform:SetWorldMatrix(m)
 							end
