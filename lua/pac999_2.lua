@@ -55,7 +55,7 @@ do
 				map = {},
 				remove = function(self, obj)
 					if not self.map[obj] then
-						error("tried to remove non existing object in pool " .. name, 2)
+						error("tried to remove non existing object '"..tostring(obj).."'  in pool " .. name, 2)
 					end
 
 					for i = 1, self.i do
@@ -1382,6 +1382,7 @@ do -- components
 						end,
 						function(ent, grabbed)
 							local key = "visual_angle_axis_" .. axis
+
 							if self[key] then
 								self[key]:Remove()
 								self[key] = nil
@@ -1399,10 +1400,6 @@ do -- components
 								visual:SetMaterial(white_mat)
 								visual:SetColor(color_white)
 								visual:SetAlpha(1)
-
-								ent:AddEvent("Finish", function()
-									visual:Remove()
-								end, "visual")
 
 								local a
 
@@ -1531,10 +1528,6 @@ do -- components
 								visual:SetAlpha(1)
 								visual:SetLocalScale(Vector(thickness/25,thickness/25,32000))
 
-								ent:AddEvent("Finish", function()
-									visual:Remove()
-								end, "visual")
-
 								local a
 
 								if axis == "GetRight" then
@@ -1639,6 +1632,7 @@ do -- components
 				end
 			else
 				for k,v in pairs(self.grab_entities) do
+					print(k,v)
 					v:Remove()
 				end
 				self.grab_entities = {}
