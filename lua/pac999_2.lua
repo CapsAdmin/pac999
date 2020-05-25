@@ -19,6 +19,10 @@ do
 
 	local utility = {}
 
+	function utility.DivideVector(a,b)
+		return Vector(a.x / b.x, a.y / b.y, a.z / b.z)
+	end
+
 	do
 		local hooks = {}
 
@@ -877,6 +881,10 @@ do -- components
 
 		--
 
+		function META:SetIgnoreParentScale(b)
+			self.IgnoreParentScale = b
+		end
+
 		function META:BuildMatrix()
 			local tr = self.Transform * Matrix()
 
@@ -892,16 +900,21 @@ do -- components
 
 			if parent then
 				parent = parent.entity.transform
-
-				tr = parent:GetMatrix() * tr
-
-				self._Scale = self:GetScale() * parent:GetScale()
+				if self.IgnoreParentScale then
+					local pm = parent:GetMatrix()*Matrix()
+					pm:SetScale(Vector(1,1,1))
+					tr = pm * tr
+					self._Scale = self:GetScale()
+				else
+					tr = parent:GetMatrix() * tr
+					self._Scale = self:GetScale() * parent:GetScale()
+				end
 			end
 
 			---tr:Translate(LerpVector(0.5, self:OBBMins(), self:OBBMaxs()))
 
-			tr:SetScale(self.LocalScaleTransform:GetScale())
 			tr:Scale(self._Scale)
+			tr:SetScale(self.LocalScaleTransform:GetScale())
 
 			return tr
 		end
@@ -1232,6 +1245,8 @@ do -- components
 	end
 
 	do -- gizmo
+		local utility = pac999.utility
+
 		local white_mat = CreateMaterial("pac999_white_" .. math.random(), "VertexLitGeneric", {
 
 			["$bumpmap"] = "effects/flat_normal",
@@ -1261,6 +1276,7 @@ do -- components
 			ent:SetPosition(self:GetCenter() + pos)
 			ent:SetMaterial(white_mat)
 			ent:SetAlpha(1)
+			ent:SetIgnoreParentScale(true)
 
 			if on_grab then
 				ent:AddEvent("Pointer", function(component, hovered, grabbed)
@@ -1323,6 +1339,8 @@ do -- components
 						invert = invert or 1
 						return function(ent)
 							local m = self.entity.transform:GetMatrix() * Matrix()
+							local scale = m:GetScale()
+							m:SetScale(Vector(1,1,1))
 
 							local temp = m * Matrix()
 							temp:Translate(self:GetCenter())
@@ -1356,6 +1374,9 @@ do -- components
 								m:Rotate(local_angles)
 								m:Translate(-self:GetCenter())
 
+								m:Scale(scale)
+
+								--self.entity.transform.Matrix = m
 								self.entity.transform:SetWorldMatrix(m)
 							end
 						end,
@@ -1453,13 +1474,11 @@ do -- components
 
 					local model = "models/hunter/misc/cone1x1.mdl"
 
-					local function div(a,b)
-						return Vector(a.x / b.x, a.y / b.y, a.z / b.z)
-					end
-
 					local function build_callback(axis, axis2)
 						return function(component)
-							local m = self.entity.transform:GetMatrix()
+							local m = self.entity.transform:GetMatrix() * Matrix()
+							local scale = m:GetScale()
+							m:SetScale(Vector(1,1,1))
 
 							local center_pos = util.IntersectRayWithPlane(
 								pac999.camera.GetViewMatrix():GetTranslation() - m:GetTranslation(),
@@ -1481,10 +1500,13 @@ do -- components
 								)
 
 								if not plane_pos then return end
+								m:SetScale(Vector(1,1,1))
 
 								local m = m * Matrix()
-								local dir = div(m[axis2](m), m:GetScale())
+								local dir = m[axis2](m)
 								m:SetTranslation(pos + dir * ((plane_pos - center_pos)):Dot(dir))
+
+								m:SetScale(scale)
 								self.entity.transform:SetWorldMatrix(m)
 							end
 						end,
@@ -1682,7 +1704,7 @@ if me then
 		end
 
 		n(0, 80, 60):SetTRScale(Vector(-1,-1,1))
-		n(0, 0, 60):SetScale(Vector(1,1,1)*2)
+		n(0, 0, 60):SetLocalScale(Vector(1,2,1)*2)
 
 		for i = 1, 1 do
 --			root = n(0, 0, 60)
