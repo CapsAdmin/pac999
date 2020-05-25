@@ -856,7 +856,7 @@ do -- components
 
 			if false then
 				debugoverlay.Text(self.Matrix:GetTranslation(), tostring(self), 0)
-				debugoverlay.Cross(self.Matrix:GetTranslation(), 2, 0, Color(0,255,0), true)
+				debugoverlay.Cross(self.Matrix:GetTranslation(), 2, 0, GREEN, true)
 
 				local min, max = self:GetCageMinMax()
 
@@ -1158,17 +1158,11 @@ do -- components
 			local mdl = self.Model
 			local world = self.entity.transform:GetMatrix()
 
-			if self.entity:HasComponent("input") and self.entity.input.Hovered then
-				render.SetColorModulation(5,5,5)
-			else
-				render.SetColorModulation(1,1,1)
-			end
-
 			local m = world * Matrix()
 			m:Translate(-self.entity.transform:GetCageCenter())
 			mdl:SetRenderOrigin(m:GetTranslation())
 
-			debugoverlay.Cross(m:GetTranslation(), 2, 0, Color(255,0,0), true)
+			debugoverlay.Cross(m:GetTranslation(), 2, 0, RED, true)
 
 			m:SetTranslation(vector_origin)
 			mdl:EnableMatrix("RenderMultiply", m)
@@ -1178,17 +1172,38 @@ do -- components
 				cam.IgnoreZ(true)
 			end
 
+			local r,g,b = 1,1,1
+			local a = 1
+
+
+			if self.Color then
+				r = self.Color.r/255
+				g = self.Color.g/255
+				b = self.Color.b/255
+			end
+
+			if self.Alpha then
+				a = self.Alpha
+			end
+
 			if self.Material then
-				if self.Color then
-					render.SetColorModulation(self.Color.r/255, self.Color.g/255, self.Color.b/255)
-				end
-
-				if self.Alpha then
-					self.Material:SetFloat("$alpha", self.Alpha)
-				end
-
 				render.MaterialOverride(self.Material)
 			end
+
+			if self.Brightness then
+				r = r * self.Brightness
+				g = g * self.Brightness
+				b = b * self.Brightness
+			end
+
+			if self.entity:HasComponent("input") and self.entity.input.Hovered then
+				r = r * 4
+				g = g * 4
+				b = b * 4
+			end
+
+			render.SetBlend(a)
+			render.SetColorModulation(r,g,b)
 
 			mdl:DrawModel()
 
@@ -1253,9 +1268,9 @@ do -- components
 			--["$halflambert"] = 1,
 
 			["$phong"] = "1",
-			["$phongboost"] = "1" ,
+			["$phongboost"] = "0.01" ,
 			["$phongfresnelranges"] = "[2 5 10]",
-			["$phongexponent"] = "100",
+			["$phongexponent"] = "0.5",
 
 
 			["$basetexture"] = "color/white",
@@ -1265,6 +1280,11 @@ do -- components
 			--["$vertexcolor"] = "1",
 			--["$vertexalpha"] = "1",
 		})
+
+		local RED = Color(255, 80, 80)
+		local GREEN = Color(80, 255, 80)
+		local BLUE = Color(80,80,255)
+		local YELLOW = Color(255,255,80)
 
 		local META = pac999.entity.ComponentTemplate("gizmo")
 
@@ -1313,7 +1333,7 @@ do -- components
 				do
 					local ent = create_grab(
 						self,
-						"models/hunter/misc/sphere025x025.mdl",
+						"models/XQM/Rails/gumball_1.mdl",
 						Vector(0,0,0),
 						function()
 							local m = pac999.camera.GetViewMatrix():GetInverse() * self.entity.transform:GetMatrix()
@@ -1324,15 +1344,16 @@ do -- components
 						end
 					)
 
-					ent:SetColor(Color(255,255,0))
+					ent:SetColor(YELLOW)
+					ent:SetLocalScale(Vector(1,1,1)*0.5)
 
 					self.center_axis = ent
 				end
 
 				if true then
 					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
-					local dist = dist * 0.5
-					local visual_size = 0.32
+					local dist = dist * 0.4
+					local visual_size = 0.28
 					local scale = 0.25
 
 					local function build_callback(axis, fixup_callback, invert)
@@ -1405,14 +1426,16 @@ do -- components
 
 								if axis == "GetRight" then
 									a = Angle(0,0,90)
-									visual:SetColor(Color(255,0,0))
+									visual:SetColor(RED)
 								elseif axis == "GetUp" then
 									a = Angle(0,0,0)
-									visual:SetColor(Color(0,255,0))
+									visual:SetColor(GREEN)
 								elseif axis == "GetForward" then
 									a = Angle(90,0,0)
-									visual:SetColor(Color(0,0,255))
+									visual:SetColor(BLUE)
 								end
+
+								visual:SetAlpha(0.25)
 								visual:SetAngles(a)
 
 								self[key] = visual
@@ -1425,13 +1448,13 @@ do -- components
 						local ent = create_grab(self, disc, dir*dist/2, build_callback(axis, fixup_callback, 1))
 
 						ent:SetAngles(gizmo_angle)
-						ent:SetLocalScale(Vector(1,1,thickness)*scale)
+						ent:SetLocalScale(Vector(1,1,thickness/5)*scale)
 						ent:SetColor(gizmo_color)
 
 						local ent = create_grab(self, disc, dir*dist/2, build_callback(axis, fixup_callback, -1))
 
 						ent:SetAngles(gizmo_angle)
-						ent:SetLocalScale(Vector(1,1,thickness)*scale)
+						ent:SetLocalScale(Vector(1,1,thickness/5)*scale)
 
 						-- this inverts the translation as well
 
@@ -1439,16 +1462,16 @@ do -- components
 						ent:SetColor(gizmo_color)
 					end
 
-					add_angle_mover(Vector(1,0,0), "GetRight", Angle(45,180,90), Color(255,0,0), function(local_angles)
+					add_angle_mover(Vector(1,0,0), "GetRight", Angle(45,180,90), RED, function(local_angles)
 						local_angles.r = -local_angles.y
 					end)
 
-					add_angle_mover(Vector(0,1,0), "GetUp", Angle(0,-90 - 45,0), Color(0,255,0), function(local_angles)
+					add_angle_mover(Vector(0,1,0), "GetUp", Angle(0,-90 - 45,0), GREEN, function(local_angles)
 						local_angles.r = -local_angles.p
 						local_angles.y = local_angles.y - 90
 					end)
 
-					add_angle_mover(Vector(0,0,1), "GetForward", Angle(90 +45,90,90), Color(0,0,255), function(local_angles)
+					add_angle_mover(Vector(0,0,1), "GetForward", Angle(90 +45,90,90), BLUE, function(local_angles)
 						-- this one is realy weird
 						local p = local_angles.p
 
@@ -1468,7 +1491,7 @@ do -- components
 					local visual_size = 0.6
 					local scale = 0.25
 					local dist = dist * 0.5
-
+					local thickness = 1.5
 					local model = "models/hunter/misc/cone1x1.mdl"
 
 					local function build_callback(axis, axis2)
@@ -1532,13 +1555,13 @@ do -- components
 
 								if axis == "GetRight" then
 									a = Angle(0,0,90)
-									visual:SetColor(Color(0,255,0))
+									visual:SetColor(GREEN)
 								elseif axis == "GetUp" then
 									a = Angle(0,0,0)
-									visual:SetColor(Color(0,0,255))
+									visual:SetColor(BLUE)
 								elseif axis == "GetForward" then
 									a = Angle(90,0,0)
-									visual:SetColor(Color(255,0,0))
+									visual:SetColor(RED)
 								end
 								visual:SetAngles(a)
 
@@ -1563,9 +1586,9 @@ do -- components
 						return ent
 					end
 
-					add_move_mover(Vector(1,0,0), Angle(90,0,0), Color(255,0,0), "GetRight", "GetForward")
-					add_move_mover(Vector(0,1,0), Angle(0,0,-90), Color(0,255,0), "GetForward", "GetRight")
-					add_move_mover(Vector(0,0,1), Angle(0,0,0), Color(0,0,255), "GetRight", "GetUp")
+					add_move_mover(Vector(1,0,0), Angle(90,0,0), RED, "GetRight", "GetForward")
+					add_move_mover(Vector(0,1,0), Angle(0,0,-90), GREEN, "GetForward", "GetRight")
+					add_move_mover(Vector(0,0,1), Angle(0,0,0), BLUE, "GetRight", "GetUp")
 				end
 
 
@@ -1626,9 +1649,9 @@ do -- components
 						return ent
 					end
 
-					add_scale_scaler(Vector(1,0,0), Angle(90,0,0), Color(255,0,0), "GetRight", "GetForward")
-					add_scale_scaler(Vector(0,1,0), Angle(0,0,-90), Color(0,255,0), "GetForward", "GetRight")
-					add_scale_scaler(Vector(0,0,1), Angle(0,0,0), Color(0,0,255), "GetRight", "GetUp")
+					add_scale_scaler(Vector(1,0,0), Angle(90,0,0), RED, "GetRight", "GetForward")
+					add_scale_scaler(Vector(0,1,0), Angle(0,0,-90), GREEN, "GetForward", "GetRight")
+					add_scale_scaler(Vector(0,0,1), Angle(0,0,0), BLUE, "GetRight", "GetUp")
 				end
 			else
 				for k,v in pairs(self.grab_entities) do
