@@ -803,6 +803,14 @@ do -- components
 			self.TRScale = Vector(1,1,1)
 		end
 
+		function META:SetCageScaleMin(val)
+			self.CageScaleMin = val
+		end
+
+		function META:SetCageScaleMax(val)
+			self.CageScaleMax = val
+		end
+
 		function META:SetCageMin(val)
 			self.CageMin = val
 		end
@@ -814,6 +822,9 @@ do -- components
 			--self.CageMin = self.CageMin - center
 			--self.CageMax = self.CageMax - center
 		end
+
+		META.CageScaleMin = Vector(1,1,1)
+		META.CageScaleMax = Vector(1,1,1)
 
 		function META:GetCageCenter()
 			return LerpVector(0.5, self.CageMin, self.CageMax)
@@ -892,6 +903,8 @@ do -- components
 				tr:SetTranslation(tr:GetTranslation() * self.TRScale)
 			end
 
+			local local_translation = tr:GetTranslation()
+
 			if self.Entity then
 				tr = self.Entity:GetWorldTransformMatrix() * tr
 			end
@@ -911,10 +924,47 @@ do -- components
 				end
 			end
 
+
 			---tr:Translate(LerpVector(0.5, self:OBBMins(), self:OBBMaxs()))
 
 			tr:Scale(self._Scale)
-			tr:SetScale(self.LocalScaleTransform:GetScale())
+			tr:Scale(self.LocalScaleTransform:GetScale())
+
+			tr:Translate(self.CageMax)
+			tr:Scale(self.CageScaleMax)
+			tr:Translate(-self.CageMax)
+
+			tr:Translate(self.CageMin)
+			tr:Scale(Vector(
+				((self.CageScaleMax.x + self.CageScaleMin.x-1)/self.CageScaleMax.x),
+				((self.CageScaleMax.y + self.CageScaleMin.y-1)/self.CageScaleMax.y),
+				((self.CageScaleMax.z + self.CageScaleMin.z-1)/self.CageScaleMax.z)
+			))
+			tr:Translate(-self.CageMin)
+
+
+			return tr
+		end
+
+		function META:GetCageScaleMatrix()
+			local tr = Matrix() do return tr end
+			---self.CageScaleMin = Vector(1,1,1)
+
+			if self.CageScaleMax then
+				if not self.CageMax:IsZero() then
+					--tr:Translate(self.CageMax*self.CageScaleMax*0.5)
+					tr:Scale(self.CageScaleMax)
+					--tr:Translate(self:GetCageCenter())
+					--tr:Translate(self.CageMax)
+				end
+			end
+
+			if self.CageScaleMin then
+				if not self.CageMin:IsZero() then
+					tr:Scale(self.CageScaleMin)
+					--tr:Translate(-self.CageMin*self.CageScaleMin*0.5 - self:GetCageCenter())
+				end
+			end
 
 			return tr
 		end
@@ -1165,7 +1215,7 @@ do -- components
 			debugoverlay.Cross(m:GetTranslation(), 2, 0, RED, true)
 
 			m:SetTranslation(vector_origin)
-			mdl:EnableMatrix("RenderMultiply", m)
+			mdl:EnableMatrix("RenderMultiply", m * self.entity.transform:GetCageScaleMatrix())
 			mdl:SetupBones()
 
 			if self.IgnoreZ then
@@ -1592,7 +1642,7 @@ do -- components
 				end
 
 
-				if false then
+				if true then
 					local visual_size = 0.6
 					local scale = 0.5
 
@@ -1716,12 +1766,27 @@ if me then
 			node:SetName(i)
 			i = i + 1
 			node:SetPosition(Vector(x,y,z))
-			node:SetModel("models/props_trainstation/Ceiling_Arch001a.mdl")
+			node:SetModel("models/hunter/blocks/cube075x075x075.mdl")
 			return node
 		end
 
-		n(0, 80, 60):SetTRScale(Vector(-1,-1,1))
-		n(0, 0, 60):SetLocalScale(Vector(1,2,1)*2)
+
+		local m = n(80, 80, 10)
+		m.transform.CageScaleMax = Vector(1,1,1)
+		m.transform.CageScaleMin = Vector(1,1,1)
+
+		local m = n(80, 115, 10)
+		m.transform.CageScaleMax = Vector(1,1,1)
+		m.transform.CageScaleMin = Vector(4,1,1)
+
+		local m = n(80, 150, 10)
+		m.transform.CageScaleMax = Vector(4,1,1)
+		m.transform.CageScaleMin = Vector(1,1,1)
+
+		for i = 0, 3 do
+			n(80 + (i*-35.5), 185, 10)
+			n(80 + (i*35.5), 185, 10)
+		end
 
 		for i = 1, 1 do
 --			root = n(0, 0, 60)
