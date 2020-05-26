@@ -803,16 +803,59 @@ do -- components
 			self.TRScale = Vector(1,1,1)
 		end
 
+		META.CageSizeMin = Vector(0,0,0)
+		META.CageSizeMax = Vector(0,0,0)
+
+		function META:GetCageSizeMin()
+			return self.CageSizeMin
+		end
+
+		function META:GetCageSizeMax()
+			return self.CageSizeMax
+		end
+
+		function META:SetCageSizeMin(val)
+			self.CageSizeMin = val
+		end
+
+		function META:SetCageSizeMax(s)
+			self.CageSizeMax = s
+
+			s = s * 1
+
+			s.x = 1 + s.x / self.CageMax.x/2
+			s.y = 1 + s.y / self.CageMax.y/2
+			s.z = 1 + s.z / self.CageMax.z/2
+
+			self:SetCageScaleMax(s)
+		end
+
+		function META:SetCageSizeMin(s)
+			self.CageSizeMin = s
+
+			s = s * 1
+
+			s.x = 1 - s.x / self.CageMin.x/2
+			s.y = 1 - s.y / self.CageMin.y/2
+			s.z = 1 - s.z / self.CageMin.z/2
+
+			self:SetCageScaleMin(s)
+		end
+
 		function META:SetCageScaleMin(val)
 			self.CageScaleMin = val
+			self:InvalidateMatrix()
 		end
 
 		function META:SetCageScaleMax(val)
 			self.CageScaleMax = val
+			self:InvalidateMatrix()
+
 		end
 
 		function META:SetCageMin(val)
 			self.CageMin = val
+
 		end
 
 		function META:SetCageMax(val)
@@ -903,8 +946,6 @@ do -- components
 				tr:SetTranslation(tr:GetTranslation() * self.TRScale)
 			end
 
-			local local_translation = tr:GetTranslation()
-
 			if self.Entity then
 				tr = self.Entity:GetWorldTransformMatrix() * tr
 			end
@@ -930,40 +971,28 @@ do -- components
 			tr:Scale(self._Scale)
 			tr:Scale(self.LocalScaleTransform:GetScale())
 
-			tr:Translate(self.CageMax)
-			tr:Scale(self.CageScaleMax)
-			tr:Translate(-self.CageMax)
-
-			tr:Translate(self.CageMin)
-			tr:Scale(Vector(
-				((self.CageScaleMax.x + self.CageScaleMin.x-1)/self.CageScaleMax.x),
-				((self.CageScaleMax.y + self.CageScaleMin.y-1)/self.CageScaleMax.y),
-				((self.CageScaleMax.z + self.CageScaleMin.z-1)/self.CageScaleMax.z)
-			))
-			tr:Translate(-self.CageMin)
-
-
 			return tr
 		end
 
-		function META:GetCageScaleMatrix()
-			local tr = Matrix() do return tr end
+		function META:GetScaleMatrix()
+			local tr = Matrix()
 			---self.CageScaleMin = Vector(1,1,1)
 
-			if self.CageScaleMax then
-				if not self.CageMax:IsZero() then
-					--tr:Translate(self.CageMax*self.CageScaleMax*0.5)
-					tr:Scale(self.CageScaleMax)
-					--tr:Translate(self:GetCageCenter())
-					--tr:Translate(self.CageMax)
-				end
-			end
+			do
+				local min = self.CageScaleMin
+				local max = self.CageScaleMax
 
-			if self.CageScaleMin then
-				if not self.CageMin:IsZero() then
-					tr:Scale(self.CageScaleMin)
-					--tr:Translate(-self.CageMin*self.CageScaleMin*0.5 - self:GetCageCenter())
-				end
+				tr:Translate(self.CageMax)
+				tr:Scale(max)
+				tr:Translate(-self.CageMax)
+
+				tr:Translate(self.CageMin)
+				tr:Scale(Vector(
+					((max.x + min.x-1)/max.x),
+					((max.y + min.y-1)/max.y),
+					((max.z + min.z-1)/max.z)
+				))
+				tr:Translate(-self.CageMin)
 			end
 
 			return tr
@@ -1215,7 +1244,7 @@ do -- components
 			debugoverlay.Cross(m:GetTranslation(), 2, 0, RED, true)
 
 			m:SetTranslation(vector_origin)
-			mdl:EnableMatrix("RenderMultiply", m * self.entity.transform:GetCageScaleMatrix())
+			mdl:EnableMatrix("RenderMultiply", m * self.entity.transform:GetScaleMatrix())
 			mdl:SetupBones()
 
 			if self.IgnoreZ then
@@ -1549,9 +1578,10 @@ do -- components
 							local m = self.entity.transform:GetMatrix() * Matrix()
 							local scale = m:GetScale()
 							m:SetScale(Vector(1,1,1))
+							local pos = m:GetTranslation()
 
 							local center_pos = util.IntersectRayWithPlane(
-								pac999.camera.GetViewMatrix():GetTranslation() - m:GetTranslation(),
+								pac999.camera.GetViewMatrix():GetTranslation() - pos,
 								pac999.camera.GetViewRay(),
 								vector_origin,
 								m[axis](m)
@@ -1560,7 +1590,6 @@ do -- components
 							if not center_pos then return end
 
 							return function()
-								local pos = m:GetTranslation()
 
 								local plane_pos = util.IntersectRayWithPlane(
 									(pac999.camera.GetViewMatrix():GetTranslation() - pos),
@@ -1648,12 +1677,13 @@ do -- components
 
 					local model = "models/hunter/blocks/cube025x025x025.mdl"
 
-					local function build_callback(axis, axis2)
+					local function build_callback(axis, axis2, reverse)
 						return function(component)
-							local m = self.entity.transform:GetMatrix()
-
+							local m = self.entity.transform:GetMatrix() * Matrix()
+							m:SetScale(Vector(1,1,1))
+							local pos = m:GetTranslation()
 							local center_pos = util.IntersectRayWithPlane(
-								pac999.camera.GetViewMatrix():GetTranslation() - m:GetTranslation(),
+								pac999.camera.GetViewMatrix():GetTranslation() - pos,
 								pac999.camera.GetViewRay(),
 								vector_origin,
 								m[axis](m)
@@ -1661,8 +1691,9 @@ do -- components
 
 							if not center_pos then return end
 
+							local cage_min_start = reverse and self.entity.transform:GetCageSizeMax()*1 or self.entity.transform:GetCageSizeMin()*1
+
 							return function()
-								local pos = m:GetTranslation()
 
 								local plane_pos = util.IntersectRayWithPlane(
 									pac999.camera.GetViewMatrix():GetTranslation() - pos,
@@ -1674,27 +1705,40 @@ do -- components
 								if not plane_pos then return end
 
 								local m = m * Matrix()
-								local dir = m[axis2](m)
-								self.entity.transform:SetLocalScale(Vector(1,1,1) + dir * (plane_pos - center_pos):Dot(dir) / 10000)
+								local dir
+								if 	axis2 == "GetForward" then
+									dir = Vector(1,0,0)
+								elseif axis2 == "GetRight" then
+									dir = Vector(0,-1,0)
+								elseif axis2 == "GetUp" then
+									dir = Vector(0,0,1)
+								end
+								local dist = (plane_pos - center_pos):Dot( m[axis2](m))
+
+								if reverse then
+									self.entity.transform:SetCageSizeMax(cage_min_start - (dir * dist))
+								else
+									self.entity.transform:SetCageSizeMin(cage_min_start + (dir * dist))
+								end
 							end
 						end
 					end
 
 					local function add_scale_scaler(dir, gizmo_angle, gizmo_color, axis, axis2)
-						local ent = create_grab(self, model, dir*dist, build_callback(axis, axis2))
+						local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2))
 						ent:SetAngles(gizmo_angle)
 						ent:SetLocalScale(Vector(1,1,1)*scale)
 						ent:SetColor(gizmo_color)
 
-						local ent = create_grab(self, model, dir*dist, build_callback(axis, axis2))
+						local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2, true))
 						ent:SetAngles(gizmo_angle)
 						ent:SetLocalScale(Vector(1,1,1)*scale)
 						ent:SetColor(gizmo_color)
 
 						if axis2 == "GetUp" then
-							ent:SetScale(Vector(1,-1,-1))
+							ent:SetTRScale(Vector(1,-1,-1))
 						else
-							ent:SetScale(Vector(-1,-1,1))
+							ent:SetTRScale(Vector(-1,-1,1))
 						end
 						return ent
 					end
@@ -1705,7 +1749,7 @@ do -- components
 				end
 			else
 				for k,v in pairs(self.grab_entities) do
-					print(k,v)
+					--print(k,v)
 					v:Remove()
 				end
 				self.grab_entities = {}
@@ -1771,21 +1815,23 @@ if me then
 		end
 
 
-		local m = n(80, 80, 10)
-		m.transform.CageScaleMax = Vector(1,1,1)
-		m.transform.CageScaleMin = Vector(1,1,1)
+		local m = n(80, 80+35.5*0, 10)
+		m.transform:SetCageSizeMax(Vector(35.5*4,1,1))
+		m.transform:SetCageSizeMin(Vector(35.5*1,1,1))
+		m.transform:SetCageSizeMin(Vector(35.5*2,1,1))
+		m.transform:SetCageSizeMin(Vector(35.5*4,1,1))
 
-		local m = n(80, 115, 10)
-		m.transform.CageScaleMax = Vector(1,1,1)
-		m.transform.CageScaleMin = Vector(4,1,1)
+		local m = n(80, 80+38*1, 10)
+		m.transform:SetCageSizeMax(Vector(1,1,1))
+		m.transform:SetCageSizeMin(Vector(35.5*4,1,1))
 
-		local m = n(80, 150, 10)
-		m.transform.CageScaleMax = Vector(4,1,1)
-		m.transform.CageScaleMin = Vector(1,1,1)
+		local m = n(80, 80+38*2, 10)
+		m.transform:SetCageSizeMax(Vector(35.5*4,1,1))
+		m.transform:SetCageSizeMin(Vector(1,1,1))
 
-		for i = 0, 3 do
-			n(80 + (i*-35.5), 185, 10)
-			n(80 + (i*35.5), 185, 10)
+		for i = 0, 4 do
+			n(80 + (i*-35.5), 80+38*3, 10):SetCageSizeMax(Vector(0,0,0))
+			n(80 + (i*35.5), 80+38*3, 10):SetCageSizeMax(Vector(0,0,0))
 		end
 
 		for i = 1, 1 do
@@ -1798,17 +1844,17 @@ if me then
 
 	timer.Simple(0, function()
 		for i,v in ipairs(world:GetAllChildrenAndSelf()) do
-			print(i, v.entity.transform, v.entity.transform.Scale, v.entity.transform._Scale)
+			--print(i, v.entity.transform, v.entity.transform.Scale, v.entity.transform._Scale)
 		end
 	end)
 
-	print("!")
+	--print("!")
 
 	for name, objects in pairs(pac999.entity.GetAll()) do
 --		print(name, #objects)
 	end
 
-	hook.Add("RenderScene", "pac_999", function()
+	hook.Add("PreDrawOpaqueRenderables", "pac_999", function()
 		for _, obj in ipairs(pac999.entity.GetAll()) do
 			obj:FireEvent("Update")
 		end
