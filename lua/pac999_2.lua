@@ -1,3 +1,12 @@
+--[[
+	TODO:
+		fix bounding box not scaling when resizing
+		fix changing angle snapping to center
+		scale faces of bounding box
+		lock mouse to axis?
+		center when scaling? maybe on release?
+]]
+
 local TEST = true
 
 if pac999_models then
@@ -107,7 +116,7 @@ do
 			max,
 			ang,
 			0,
-			Color(255,0,0, 0)
+			Color(255,0,0, 50), true
 		)
 
 		return util.IntersectRayWithOBB(
@@ -971,6 +980,7 @@ do -- components
 			tr:Scale(self._Scale)
 			tr:Scale(self.LocalScaleTransform:GetScale())
 
+
 			return tr
 		end
 
@@ -999,7 +1009,9 @@ do -- components
 		end
 
 		function META:GetScale()
-			return self._Scale or self.Scale *  self.TRScale
+			local s = (self._Scale or self.Scale)
+
+			return s
 		end
 
 		function META:SetWorldMatrix(m)
@@ -1200,15 +1212,30 @@ do -- components
 			if not rawget(self.entity, "bounding_box") then return end
 
 			local m = self.entity.transform:GetMatrix()
+
+
 			local min, max = self.entity.bounding_box:GetWorldSpaceBoundingBox()
 
 			min = min - m:GetTranslation()
 			max = max - m:GetTranslation()
 
-			return camera.IntersectRayWithOBB(
-				m:GetTranslation(), m:GetAngles(),
+			local old = m:GetScale()
+			local oldtr = m:GetTranslation()
+			m:SetTranslation(vector_origin)
+			m:SetScale(Vector(1,1,1))
+			m:SetTranslation(oldtr)
+			local a = m:GetAngles()
+			m:SetScale(old)
+
+
+			local a,b,c = camera.IntersectRayWithOBB(
+				m:GetTranslation(), a,
 				min, max
 			)
+
+			--m:SetAngles(A)
+
+			return a,b,c
 		end
 
 		META:Register()
@@ -1532,8 +1559,13 @@ do -- components
 
 						local ent = create_grab(self, disc, dir*dist/2, build_callback(axis, fixup_callback, -1))
 
-						ent:SetAngles(gizmo_angle)
+						ent:SetAngles(gizmo_angle + Angle(0,180,0))
 						ent:SetLocalScale(Vector(1,1,thickness/5)*scale)
+
+						if axis == "GetForward" then
+							ent:SetAngles(gizmo_angle + Angle(180,0,0))
+
+						end
 
 						-- this inverts the translation as well
 
@@ -1830,8 +1862,14 @@ if me then
 		m.transform:SetCageSizeMin(Vector(1,1,1))
 
 		for i = 0, 4 do
-			n(80 + (i*-35.5), 80+38*3, 10):SetCageSizeMax(Vector(0,0,0))
-			n(80 + (i*35.5), 80+38*3, 10):SetCageSizeMax(Vector(0,0,0))
+			local m = n(80 + (i*-35.5), 80+38*3, 10)
+			m:SetAlpha(0.99)
+			m:SetCageSizeMax(Vector(0,0,0))
+
+			local m = n(80 + (i*35.5), 80+38*3, 10)
+			m:SetCageSizeMax(Vector(0,0,0))
+			m:SetAlpha(0.99)
+			m:SetAngles(Angle(45,0,0))
 		end
 
 		for i = 1, 1 do
