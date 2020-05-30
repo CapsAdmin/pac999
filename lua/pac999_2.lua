@@ -2,9 +2,10 @@
 	TODO:
 		fix bounding box not scaling when resizing
 		fix changing angle snapping to center
-		scale faces of bounding box
+		use faces of bounding box to scale
+
 		lock mouse to axis?
-		center when scaling? maybe on release?
+		center gizmo when scaling? maybe on release?
 
 		figure out a better way to mirror everything
 ]]
@@ -1422,372 +1423,391 @@ do -- components
 				end)
 			end
 
-			self.grab_entities = self.grab_entities or {}
 			table.insert(self.grab_entities, ent)
 
 			return ent
+		end
+
+		function META:Start()
+			self.grab_entities = {}
 		end
 
 		function META:GetCenter()
 			return self.entity.bounding_box:GetWorldSpaceCenter() - self.entity:GetMatrix():GetTranslation()
 		end
 
+		local dist = 100
+		local thickness = 0.5
+
+		function META:SetupViewTranslation()
+			local ent = create_grab(
+				self,
+				"models/XQM/Rails/gumball_1.mdl",
+				Vector(0,0,0),
+				function()
+					local m = pac999.camera.GetViewMatrix():GetInverse() * self.entity.transform:GetMatrix()
+
+					return function()
+						self.entity.transform:SetWorldMatrix(pac999.camera.GetViewMatrix() * m)
+					end
+				end
+			)
+
+			ent:SetColor(YELLOW)
+			ent:SetLocalScale(Vector(1,1,1)*0.5)
+		end
+
+		function META:StartGrab(axis)
+			self.grab_matrix = self.entity.transform:GetMatrix() * Matrix()
+			self.old_scale = self.grab_matrix:GetScale()
+			self.grab_matrix:SetScale(Vector(1,1,1))
+
+			self.center_pos = util.IntersectRayWithPlane(
+				pac999.camera.GetViewMatrix():GetTranslation() - self.grab_matrix:GetTranslation(),
+				pac999.camera.GetViewRay(),
+				vector_origin,
+				self.grab_matrix[axis](self.grab_matrix)
+			)
+
+			if not self.center_pos then return end
+
+			return self.grab_matrix, self.center_pos
+		end
+
+		function META:GetGrabPlanePosition(axis)
+			local plane_pos = util.IntersectRayWithPlane(
+				(pac999.camera.GetViewMatrix():GetTranslation() - self.grab_matrix:GetTranslation()),
+				pac999.camera.GetViewRay(),
+				vector_origin,
+				self.grab_matrix[axis](self.grab_matrix)
+			)
+
+			return plane_pos
+		end
+
+		function META:SetWorldMatrix(m)
+			m:SetScale(self.old_scale)
+			self.entity.transform:SetWorldMatrix(m)
+		end
+
+		function META:SetupTranslation()
+			local disc = "models/hunter/tubes/tube4x4x025d.mdl"
+			local visual_size = 0.6
+			local scale = 0.25
+			local dist = dist * 0.5
+			local thickness = 1.5
+			local model = "models/hunter/misc/cone1x1.mdl"
+
+			local function build_callback(axis, axis2)
+				return function(component)
+					local m, center_pos = self:StartGrab(axis)
+
+					if not m then return end
+
+					return function()
+
+						local plane_pos = self:GetGrabPlanePosition(axis)
+
+						if not plane_pos then return end
+
+						local m = m * Matrix()
+						local dir = m[axis2](m)
+						m:SetTranslation(m:GetTranslation() + dir * (plane_pos - center_pos):Dot(dir))
+
+						self:SetWorldMatrix(m)
+					end
+				end,
+				function(ent, grabbed)
+					local axis = axis2
+					local key = "visual_move_axis_" .. axis
+					if self[key] then
+						self[key]:Remove()
+						self[key] = nil
+					end
+
+
+					if grabbed then
+						local visual = pac999.scene.AddNode(self.entity)
+						visual:SetIgnoreZ(true)
+						visual:RemoveComponent("gizmo")
+						visual:RemoveComponent("input")
+						visual:SetModel("models/hunter/blocks/cube025x025x025.mdl")
+						visual:SetPosition(self:GetCenter())
+						visual:SetMaterial(white_mat)
+						visual:SetColor(color_white)
+						visual:SetAlpha(1)
+						visual:SetLocalScale(Vector(thickness/25,thickness/25,32000))
+
+						local a
+
+						if axis == "GetRight" then
+							a = Angle(0,0,90)
+							visual:SetColor(GREEN)
+						elseif axis == "GetUp" then
+							a = Angle(0,0,0)
+							visual:SetColor(BLUE)
+						elseif axis == "GetForward" then
+							a = Angle(90,0,0)
+							visual:SetColor(RED)
+						end
+						visual:SetAngles(a)
+
+						self[key] = visual
+					end
+
+				end
+			end
+
+			local function add_grabbable(dir, gizmo_angle, gizmo_color, axis, axis2)
+				local ent = create_grab(self, model, dir*dist, build_callback(axis, axis2))
+				ent:SetAngles(gizmo_angle)
+				ent:SetLocalScale(Vector(1,1,1)*0.25)
+				ent:SetColor(gizmo_color)
+
+				local ent = create_grab(self, model, dir*dist, build_callback(axis, axis2))
+				if axis2 == "GetUp" then
+					ent:SetAngles(gizmo_angle + Angle(180,0,0))
+				else
+					ent:SetAngles(gizmo_angle + Angle(0,180,0))
+				end
+				ent:SetLocalScale(Vector(1,1,1)*0.25)
+				ent:SetColor(gizmo_color)
+				ent:SetTRScale(Vector(-1,-1,-1))
+
+				return ent
+			end
+
+			add_grabbable(Vector(1,0,0), Angle(90,0,0), RED, "GetRight", "GetForward")
+			add_grabbable(Vector(0,1,0), Angle(0,0,-90), GREEN, "GetForward", "GetRight")
+			add_grabbable(Vector(0,0,1), Angle(0,0,0), BLUE, "GetRight", "GetUp")
+		end
+
+		function META:SetupRotation()
+			local disc = "models/hunter/tubes/tube4x4x025d.mdl"
+			local dist = dist * 0.4
+			local visual_size = 0.28
+			local scale = 0.25
+
+			local function build_callback(axis, fixup_callback, invert)
+				invert = invert or 1
+				return function(ent)
+					local m = self.entity.transform:GetMatrix() * Matrix()
+					local scale = m:GetScale()
+					m:SetScale(Vector(1,1,1))
+
+					local temp = m * Matrix()
+					temp:Translate(self:GetCenter())
+					local center_pos = temp:GetTranslation()
+
+					return function()
+						local plane_pos = util.IntersectRayWithPlane(
+							pac999.camera.GetViewMatrix():GetTranslation(),
+							pac999.camera.GetViewRay(),
+							center_pos,
+							m[axis](m)
+						)
+
+						if not plane_pos then return end
+
+						local rot = Matrix()
+						rot:SetAngles(((plane_pos - center_pos)*invert):Angle())
+
+						local local_angles = (m:GetInverse() * rot):GetAngles()
+
+
+						-- TODO: figure out why we need to fixup the local angles
+
+						-- not sure why we have to do this
+						-- if not, the entire model inverts when it
+						-- reaches 180 deg around the rotation
+						fixup_callback(local_angles)
+
+						local m = m * Matrix()
+						m:Translate(self:GetCenter())
+						m:Rotate(local_angles)
+						m:Translate(-self:GetCenter())
+
+						m:Scale(scale)
+
+						--self.entity.transform.Matrix = m
+						self.entity.transform:SetWorldMatrix(m)
+					end
+				end,
+				function(ent, grabbed)
+					local key = "visual_angle_axis_" .. axis
+
+					if self[key] then
+						self[key]:Remove()
+						self[key] = nil
+					end
+
+					if grabbed then
+						local visual = pac999.scene.AddNode(self.entity)
+						visual:SetIgnoreZ(true)
+						visual:RemoveComponent("gizmo")
+						visual:RemoveComponent("input")
+						visual:SetModel("models/hunter/tubes/tube4x4x025.mdl")
+						visual:SetPosition(self:GetCenter())
+						visual:SetLocalScale(Vector(1,1,thickness/5)*visual_size)
+
+						visual:SetMaterial(white_mat)
+						visual:SetColor(color_white)
+						visual:SetAlpha(1)
+
+						local a
+
+						if axis == "GetRight" then
+							a = Angle(0,0,90)
+							visual:SetColor(RED)
+						elseif axis == "GetUp" then
+							a = Angle(0,0,0)
+							visual:SetColor(GREEN)
+						elseif axis == "GetForward" then
+							a = Angle(90,0,0)
+							visual:SetColor(BLUE)
+						end
+
+						visual:SetAlpha(0.25)
+						visual:SetAngles(a)
+
+						self[key] = visual
+					end
+
+				end
+			end
+
+			local function add_grabbable(dir, axis, gizmo_angle, gizmo_color, fixup_callback)
+				local ent = create_grab(self, disc, dir*dist/2, build_callback(axis, fixup_callback, 1))
+
+				ent:SetAngles(gizmo_angle)
+				ent:SetLocalScale(Vector(1,1,thickness/5)*scale)
+				ent:SetColor(gizmo_color)
+
+				local ent = create_grab(self, disc, dir*dist/2, build_callback(axis, fixup_callback, -1))
+
+				ent:SetAngles(gizmo_angle + Angle(0,180,0))
+				ent:SetLocalScale(Vector(1,1,thickness/5)*scale)
+
+				if axis == "GetForward" then
+					ent:SetAngles(gizmo_angle + Angle(180,0,0))
+
+				end
+
+				-- this inverts the translation as well
+
+				ent:SetTRScale(Vector(-1,-1,-1))
+				ent:SetColor(gizmo_color)
+			end
+
+			add_grabbable(Vector(1,0,0), "GetRight", Angle(45,180,90), RED, function(local_angles)
+				local_angles.r = -local_angles.y
+			end)
+
+			add_grabbable(Vector(0,1,0), "GetUp", Angle(0,-90 - 45,0), GREEN, function(local_angles)
+				local_angles.r = -local_angles.p
+				local_angles.y = local_angles.y - 90
+			end)
+
+			add_grabbable(Vector(0,0,1), "GetForward", Angle(90 +45,90,90), BLUE, function(local_angles)
+				-- this one is realy weird
+				local p = local_angles.p
+
+				if local_angles.y > 0 then
+					p = -p + 180
+				end
+
+				local_angles.r = -90 + p
+				local_angles.p = 180
+				local_angles.y = 180
+			end)
+		end
+
+		function META:SetupScale()
+			local visual_size = 0.6
+			local scale = 0.5
+
+			local model = "models/hunter/blocks/cube025x025x025.mdl"
+
+			local function build_callback(axis, axis2, reverse)
+				return function(component)
+					local m = self.entity.transform:GetMatrix() * Matrix()
+					m:SetScale(Vector(1,1,1))
+					local pos = m:GetTranslation()
+					local center_pos = util.IntersectRayWithPlane(
+						pac999.camera.GetViewMatrix():GetTranslation() - pos,
+						pac999.camera.GetViewRay(),
+						vector_origin,
+						m[axis](m)
+					)
+
+					if not center_pos then return end
+
+					local cage_min_start = reverse and self.entity.transform:GetCageSizeMax()*1 or self.entity.transform:GetCageSizeMin()*1
+
+					return function()
+
+						local plane_pos = util.IntersectRayWithPlane(
+							pac999.camera.GetViewMatrix():GetTranslation() - pos,
+							pac999.camera.GetViewRay(),
+							vector_origin,
+							m[axis](m)
+						)
+
+						if not plane_pos then return end
+
+						local m = m * Matrix()
+						local dir
+						if 	axis2 == "GetForward" then
+							dir = Vector(1,0,0)
+						elseif axis2 == "GetRight" then
+							dir = Vector(0,-1,0)
+						elseif axis2 == "GetUp" then
+							dir = Vector(0,0,1)
+						end
+						local dist = (plane_pos - center_pos):Dot( m[axis2](m))
+
+						if reverse then
+							self.entity.transform:SetCageSizeMax(cage_min_start - (dir * dist))
+						else
+							self.entity.transform:SetCageSizeMin(cage_min_start + (dir * dist))
+						end
+					end
+				end
+			end
+
+			local function add_grabbable(dir, gizmo_angle, gizmo_color, axis, axis2)
+				local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2))
+				ent:SetAngles(gizmo_angle)
+				ent:SetLocalScale(Vector(1,1,1)*scale)
+				ent:SetColor(gizmo_color)
+
+				local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2, true))
+				ent:SetAngles(gizmo_angle)
+				ent:SetLocalScale(Vector(1,1,1)*scale)
+				ent:SetColor(gizmo_color)
+
+				if axis2 == "GetUp" then
+					ent:SetTRScale(Vector(1,-1,-1))
+				else
+					ent:SetTRScale(Vector(-1,-1,1))
+				end
+				return ent
+			end
+
+			add_grabbable(Vector(1,0,0), Angle(90,0,0), RED, "GetRight", "GetForward")
+			add_grabbable(Vector(0,1,0), Angle(0,0,-90), GREEN, "GetForward", "GetRight")
+			add_grabbable(Vector(0,0,1), Angle(0,0,0), BLUE, "GetRight", "GetUp")
+		end
+
 		function META:EnableGizmo(b)
 
 			if b then
-				local dist = 100
-				local thickness = 0.5
-
-				do
-					local ent = create_grab(
-						self,
-						"models/XQM/Rails/gumball_1.mdl",
-						Vector(0,0,0),
-						function()
-							local m = pac999.camera.GetViewMatrix():GetInverse() * self.entity.transform:GetMatrix()
-
-							return function()
-								self.entity.transform:SetWorldMatrix(pac999.camera.GetViewMatrix() * m)
-							end
-						end
-					)
-
-					ent:SetColor(YELLOW)
-					ent:SetLocalScale(Vector(1,1,1)*0.5)
-
-					self.center_axis = ent
-				end
-
-				if true then
-					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
-					local dist = dist * 0.4
-					local visual_size = 0.28
-					local scale = 0.25
-
-					local function build_callback(axis, fixup_callback, invert)
-						invert = invert or 1
-						return function(ent)
-							local m = self.entity.transform:GetMatrix() * Matrix()
-							local scale = m:GetScale()
-							m:SetScale(Vector(1,1,1))
-
-							local temp = m * Matrix()
-							temp:Translate(self:GetCenter())
-							local center_pos = temp:GetTranslation()
-
-							return function()
-								local plane_pos = util.IntersectRayWithPlane(
-									pac999.camera.GetViewMatrix():GetTranslation(),
-									pac999.camera.GetViewRay(),
-									center_pos,
-									m[axis](m)
-								)
-
-								if not plane_pos then return end
-
-								local rot = Matrix()
-								rot:SetAngles(((plane_pos - center_pos)*invert):Angle())
-
-								local local_angles = (m:GetInverse() * rot):GetAngles()
-
-
-								-- TODO: figure out why we need to fixup the local angles
-
-								-- not sure why we have to do this
-								-- if not, the entire model inverts when it
-								-- reaches 180 deg around the rotation
-								fixup_callback(local_angles)
-
-								local m = m * Matrix()
-								m:Translate(self:GetCenter())
-								m:Rotate(local_angles)
-								m:Translate(-self:GetCenter())
-
-								m:Scale(scale)
-
-								--self.entity.transform.Matrix = m
-								self.entity.transform:SetWorldMatrix(m)
-							end
-						end,
-						function(ent, grabbed)
-							local key = "visual_angle_axis_" .. axis
-
-							if self[key] then
-								self[key]:Remove()
-								self[key] = nil
-							end
-
-							if grabbed then
-								local visual = pac999.scene.AddNode(self.entity)
-								visual:SetIgnoreZ(true)
-								visual:RemoveComponent("gizmo")
-								visual:RemoveComponent("input")
-								visual:SetModel("models/hunter/tubes/tube4x4x025.mdl")
-								visual:SetPosition(self:GetCenter())
-								visual:SetLocalScale(Vector(1,1,thickness/5)*visual_size)
-
-								visual:SetMaterial(white_mat)
-								visual:SetColor(color_white)
-								visual:SetAlpha(1)
-
-								local a
-
-								if axis == "GetRight" then
-									a = Angle(0,0,90)
-									visual:SetColor(RED)
-								elseif axis == "GetUp" then
-									a = Angle(0,0,0)
-									visual:SetColor(GREEN)
-								elseif axis == "GetForward" then
-									a = Angle(90,0,0)
-									visual:SetColor(BLUE)
-								end
-
-								visual:SetAlpha(0.25)
-								visual:SetAngles(a)
-
-								self[key] = visual
-							end
-
-						end
-					end
-
-					local function add_angle_mover(dir, axis, gizmo_angle, gizmo_color, fixup_callback)
-						local ent = create_grab(self, disc, dir*dist/2, build_callback(axis, fixup_callback, 1))
-
-						ent:SetAngles(gizmo_angle)
-						ent:SetLocalScale(Vector(1,1,thickness/5)*scale)
-						ent:SetColor(gizmo_color)
-
-						local ent = create_grab(self, disc, dir*dist/2, build_callback(axis, fixup_callback, -1))
-
-						ent:SetAngles(gizmo_angle + Angle(0,180,0))
-						ent:SetLocalScale(Vector(1,1,thickness/5)*scale)
-
-						if axis == "GetForward" then
-							ent:SetAngles(gizmo_angle + Angle(180,0,0))
-
-						end
-
-						-- this inverts the translation as well
-
-						ent:SetTRScale(Vector(-1,-1,-1))
-						ent:SetColor(gizmo_color)
-					end
-
-					add_angle_mover(Vector(1,0,0), "GetRight", Angle(45,180,90), RED, function(local_angles)
-						local_angles.r = -local_angles.y
-					end)
-
-					add_angle_mover(Vector(0,1,0), "GetUp", Angle(0,-90 - 45,0), GREEN, function(local_angles)
-						local_angles.r = -local_angles.p
-						local_angles.y = local_angles.y - 90
-					end)
-
-					add_angle_mover(Vector(0,0,1), "GetForward", Angle(90 +45,90,90), BLUE, function(local_angles)
-						-- this one is realy weird
-						local p = local_angles.p
-
-						if local_angles.y > 0 then
-							p = -p + 180
-						end
-
-						local_angles.r = -90 + p
-						local_angles.p = 180
-						local_angles.y = 180
-					end)
-				end
-
-
-				do
-					local disc = "models/hunter/tubes/tube4x4x025d.mdl"
-					local visual_size = 0.6
-					local scale = 0.25
-					local dist = dist * 0.5
-					local thickness = 1.5
-					local model = "models/hunter/misc/cone1x1.mdl"
-
-					local function build_callback(axis, axis2)
-						return function(component)
-							local m = self.entity.transform:GetMatrix() * Matrix()
-							local scale = m:GetScale()
-							m:SetScale(Vector(1,1,1))
-							local pos = m:GetTranslation()
-
-							local center_pos = util.IntersectRayWithPlane(
-								pac999.camera.GetViewMatrix():GetTranslation() - pos,
-								pac999.camera.GetViewRay(),
-								vector_origin,
-								m[axis](m)
-							)
-
-							if not center_pos then return end
-
-							return function()
-
-								local plane_pos = util.IntersectRayWithPlane(
-									(pac999.camera.GetViewMatrix():GetTranslation() - pos),
-									pac999.camera.GetViewRay(),
-									vector_origin,
-									m[axis](m)
-								)
-
-								if not plane_pos then return end
-								m:SetScale(Vector(1,1,1))
-
-								local m = m * Matrix()
-								local dir = m[axis2](m)
-								m:SetTranslation(pos + dir * ((plane_pos - center_pos)):Dot(dir))
-
-								m:SetScale(scale)
-								self.entity.transform:SetWorldMatrix(m)
-							end
-						end,
-						function(ent, grabbed)
-							local axis = axis2
-							local key = "visual_move_axis_" .. axis
-							if self[key] then
-								self[key]:Remove()
-								self[key] = nil
-							end
-
-
-							if grabbed then
-								local visual = pac999.scene.AddNode(self.entity)
-								visual:SetIgnoreZ(true)
-								visual:RemoveComponent("gizmo")
-								visual:RemoveComponent("input")
-								visual:SetModel("models/hunter/blocks/cube025x025x025.mdl")
-								visual:SetPosition(self:GetCenter())
-								visual:SetMaterial(white_mat)
-								visual:SetColor(color_white)
-								visual:SetAlpha(1)
-								visual:SetLocalScale(Vector(thickness/25,thickness/25,32000))
-
-								local a
-
-								if axis == "GetRight" then
-									a = Angle(0,0,90)
-									visual:SetColor(GREEN)
-								elseif axis == "GetUp" then
-									a = Angle(0,0,0)
-									visual:SetColor(BLUE)
-								elseif axis == "GetForward" then
-									a = Angle(90,0,0)
-									visual:SetColor(RED)
-								end
-								visual:SetAngles(a)
-
-								self[key] = visual
-							end
-
-						end
-					end
-
-					local function add_move_mover(dir, gizmo_angle, gizmo_color, axis, axis2)
-						local ent = create_grab(self, model, dir*dist, build_callback(axis, axis2))
-						ent:SetAngles(gizmo_angle)
-						ent:SetLocalScale(Vector(1,1,1)*0.25)
-						ent:SetColor(gizmo_color)
-
-						local ent = create_grab(self, model, dir*dist, build_callback(axis, axis2))
-						if axis2 == "GetUp" then
-							ent:SetAngles(gizmo_angle + Angle(180,0,0))
-						else
-							ent:SetAngles(gizmo_angle + Angle(0,180,0))
-						end
-						ent:SetLocalScale(Vector(1,1,1)*0.25)
-						ent:SetColor(gizmo_color)
-						ent:SetTRScale(Vector(-1,-1,-1))
-
-						return ent
-					end
-
-					add_move_mover(Vector(1,0,0), Angle(90,0,0), RED, "GetRight", "GetForward")
-					add_move_mover(Vector(0,1,0), Angle(0,0,-90), GREEN, "GetForward", "GetRight")
-					add_move_mover(Vector(0,0,1), Angle(0,0,0), BLUE, "GetRight", "GetUp")
-				end
-
-
-				if true then
-					local visual_size = 0.6
-					local scale = 0.5
-
-					local model = "models/hunter/blocks/cube025x025x025.mdl"
-
-					local function build_callback(axis, axis2, reverse)
-						return function(component)
-							local m = self.entity.transform:GetMatrix() * Matrix()
-							m:SetScale(Vector(1,1,1))
-							local pos = m:GetTranslation()
-							local center_pos = util.IntersectRayWithPlane(
-								pac999.camera.GetViewMatrix():GetTranslation() - pos,
-								pac999.camera.GetViewRay(),
-								vector_origin,
-								m[axis](m)
-							)
-
-							if not center_pos then return end
-
-							local cage_min_start = reverse and self.entity.transform:GetCageSizeMax()*1 or self.entity.transform:GetCageSizeMin()*1
-
-							return function()
-
-								local plane_pos = util.IntersectRayWithPlane(
-									pac999.camera.GetViewMatrix():GetTranslation() - pos,
-									pac999.camera.GetViewRay(),
-									vector_origin,
-									m[axis](m)
-								)
-
-								if not plane_pos then return end
-
-								local m = m * Matrix()
-								local dir
-								if 	axis2 == "GetForward" then
-									dir = Vector(1,0,0)
-								elseif axis2 == "GetRight" then
-									dir = Vector(0,-1,0)
-								elseif axis2 == "GetUp" then
-									dir = Vector(0,0,1)
-								end
-								local dist = (plane_pos - center_pos):Dot( m[axis2](m))
-
-								if reverse then
-									self.entity.transform:SetCageSizeMax(cage_min_start - (dir * dist))
-								else
-									self.entity.transform:SetCageSizeMin(cage_min_start + (dir * dist))
-								end
-							end
-						end
-					end
-
-					local function add_scale_scaler(dir, gizmo_angle, gizmo_color, axis, axis2)
-						local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2))
-						ent:SetAngles(gizmo_angle)
-						ent:SetLocalScale(Vector(1,1,1)*scale)
-						ent:SetColor(gizmo_color)
-
-						local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2, true))
-						ent:SetAngles(gizmo_angle)
-						ent:SetLocalScale(Vector(1,1,1)*scale)
-						ent:SetColor(gizmo_color)
-
-						if axis2 == "GetUp" then
-							ent:SetTRScale(Vector(1,-1,-1))
-						else
-							ent:SetTRScale(Vector(-1,-1,1))
-						end
-						return ent
-					end
-
-					add_scale_scaler(Vector(1,0,0), Angle(90,0,0), RED, "GetRight", "GetForward")
-					add_scale_scaler(Vector(0,1,0), Angle(0,0,-90), GREEN, "GetForward", "GetRight")
-					add_scale_scaler(Vector(0,0,1), Angle(0,0,0), BLUE, "GetRight", "GetUp")
-				end
+				self:SetupViewTranslation()
+				self:SetupTranslation()
+				self:SetupRotation()
+				self:SetupScale()
 			else
 				for k,v in pairs(self.grab_entities) do
-					--print(k,v)
 					v:Remove()
 				end
 				self.grab_entities = {}
