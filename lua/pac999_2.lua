@@ -5,6 +5,8 @@
 		scale faces of bounding box
 		lock mouse to axis?
 		center when scaling? maybe on release?
+
+		figure out a better way to mirror everything
 ]]
 
 local TEST = true
@@ -1689,7 +1691,11 @@ do -- components
 						ent:SetColor(gizmo_color)
 
 						local ent = create_grab(self, model, dir*dist, build_callback(axis, axis2))
-						ent:SetAngles(gizmo_angle)
+						if axis2 == "GetUp" then
+							ent:SetAngles(gizmo_angle + Angle(180,0,0))
+						else
+							ent:SetAngles(gizmo_angle + Angle(0,180,0))
+						end
 						ent:SetLocalScale(Vector(1,1,1)*0.25)
 						ent:SetColor(gizmo_color)
 						ent:SetTRScale(Vector(-1,-1,-1))
