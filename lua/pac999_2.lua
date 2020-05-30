@@ -1,7 +1,6 @@
 --[[
 	TODO:
 		fix bounding box not scaling when resizing
-		fix changing angle snapping to center
 		use faces of bounding box to scale
 
 		lock mouse to axis?
@@ -1457,15 +1456,18 @@ do -- components
 			ent:SetLocalScale(Vector(1,1,1)*0.5)
 		end
 
-		function META:StartGrab(axis)
+		function META:StartGrab(axis, center)
+
 			self.grab_matrix = self.entity.transform:GetMatrix() * Matrix()
+			center = center or self.grab_matrix:GetTranslation()
 			self.old_scale = self.grab_matrix:GetScale()
 			self.grab_matrix:SetScale(Vector(1,1,1))
 
+
 			self.center_pos = util.IntersectRayWithPlane(
-				pac999.camera.GetViewMatrix():GetTranslation() - self.grab_matrix:GetTranslation(),
+				pac999.camera.GetViewMatrix():GetTranslation(),
 				pac999.camera.GetViewRay(),
-				vector_origin,
+				center,
 				self.grab_matrix[axis](self.grab_matrix)
 			)
 
@@ -1474,11 +1476,13 @@ do -- components
 			return self.grab_matrix, self.center_pos
 		end
 
-		function META:GetGrabPlanePosition(axis)
+		function META:GetGrabPlanePosition(axis, center)
+			center = center or self.grab_matrix:GetTranslation()
+
 			local plane_pos = util.IntersectRayWithPlane(
-				(pac999.camera.GetViewMatrix():GetTranslation() - self.grab_matrix:GetTranslation()),
+				pac999.camera.GetViewMatrix():GetTranslation(),
 				pac999.camera.GetViewRay(),
-				vector_origin,
+				center,
 				self.grab_matrix[axis](self.grab_matrix)
 			)
 
@@ -1588,49 +1592,49 @@ do -- components
 			local visual_size = 0.28
 			local scale = 0.25
 
+			-- TODO: figure out why we need to fixup the local angles
+
+			-- not sure why we have to do this
+			-- if not, the entire model inverts when it
+			-- reaches 180 deg around the rotation
+
 			local function build_callback(axis, fixup_callback, invert)
+
+				local function local_matrix(m, dir)
+					local lrot = Matrix()
+					lrot:Rotate(dir:Angle())
+					lrot = m:GetInverse() * lrot
+					local temp_ang = lrot:GetAngles()
+					fixup_callback(temp_ang)
+					lrot = Matrix()
+					lrot:SetAngles(temp_ang)
+					return lrot
+				end
+
 				invert = invert or 1
 				return function(ent)
-					local m = self.entity.transform:GetMatrix() * Matrix()
-					local scale = m:GetScale()
-					m:SetScale(Vector(1,1,1))
+					local m, center_pos = self:StartGrab(axis)
 
-					local temp = m * Matrix()
-					temp:Translate(self:GetCenter())
-					local center_pos = temp:GetTranslation()
+					if not m then return end
+
+					local local_start_rotation = local_matrix(m, (center_pos - m:GetTranslation())*invert)
 
 					return function()
-						local plane_pos = util.IntersectRayWithPlane(
-							pac999.camera.GetViewMatrix():GetTranslation(),
-							pac999.camera.GetViewRay(),
-							center_pos,
-							m[axis](m)
-						)
+						local plane_pos = self:GetGrabPlanePosition(axis)
 
 						if not plane_pos then return end
 
-						local rot = Matrix()
-						rot:SetAngles(((plane_pos - center_pos)*invert):Angle())
+						local local_drag_rotation = local_matrix(m, (plane_pos - m:GetTranslation())*invert)
 
-						local local_angles = (m:GetInverse() * rot):GetAngles()
-
-
-						-- TODO: figure out why we need to fixup the local angles
-
-						-- not sure why we have to do this
-						-- if not, the entire model inverts when it
-						-- reaches 180 deg around the rotation
-						fixup_callback(local_angles)
+						--debugoverlay.Line(m:GetTranslation(), m:GetTranslation() + (local_drag_rotation:GetForward() * -1000), 0, RED, true)
+						--debugoverlay.Line(m:GetTranslation(), m:GetTranslation() + (local_start_rotation:GetForward() * -1000),0, RED, true)
 
 						local m = m * Matrix()
 						m:Translate(self:GetCenter())
-						m:Rotate(local_angles)
+						m = m * local_start_rotation:GetInverse() * local_drag_rotation
 						m:Translate(-self:GetCenter())
 
-						m:Scale(scale)
-
-						--self.entity.transform.Matrix = m
-						self.entity.transform:SetWorldMatrix(m)
+						self:SetWorldMatrix(m)
 					end
 				end,
 				function(ent, grabbed)
