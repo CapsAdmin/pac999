@@ -16,7 +16,7 @@ if pac999_models then
 	hook.Remove("RenderScene", "pac_999_input")
 	hook.Remove("PostDrawOpaqueRenderables", "pac_999")
 
-	for k,v in pairs(pac999_models) do
+	for _,v in pairs(pac999_models) do
 		SafeRemoveEntity(v)
 	end
 	pac999_models = nil
@@ -146,7 +146,7 @@ do
 		local m = Matrix()
 
 		m:SetAngles(camera.GetViewRay():Angle())
-		m:SetTranslation(EyePos())
+		m:SetTranslation(camera.eye_pos)
 
 		return m
 	end
@@ -169,7 +169,7 @@ do
 	function input.Update()
 		local inputs = {}
 
-		for i, v in ipairs(pac999.entity.GetAllComponents("input")) do
+		for _, v in ipairs(pac999.entity.GetAllComponents("input")) do
 			table.insert(inputs, v)
 		end
 
@@ -197,12 +197,12 @@ do
 		for _, obj in ipairs(inputs) do
 			local hit_pos, normal, fraction = obj:CameraRayIntersect()
 
-			if hit_pos then
-				for _, obj2 in ipairs(inputs) do
-					if obj2 ~= obj then
-						obj2:SetPointerOver(false)
-					end
+			for _, obj2 in ipairs(inputs) do
+				if obj2 ~= obj then
+					obj2:SetPointerOver(false)
 				end
+			end
+			if hit_pos then
 
 				--obj:FireEvent("MouseOver", hit_pos, normal, fraction)
 				obj:SetHitPosition(hit_pos)
@@ -221,8 +221,15 @@ do
 		end
 	end
 
-	hook.Add("RenderScene", "pac_999_input", function()
+	hook.Remove("Think", "pac_999_input")
+
+	hook.Add("RenderScene", "pac_999_input", function(pos, ang, fov)
+		pac999.camera.eye_pos = pos
+		pac999.camera.eye_ang = ang
+		pac999.camera.eye_fov = fov
+		cam.PushModelMatrix(Matrix())
 		pac999.input.Update()
+		cam.PopModelMatrix()
 	end)
 
 	pac999.input = input
@@ -817,6 +824,13 @@ do -- components
 		META.CageSizeMin = Vector(0,0,0)
 		META.CageSizeMax = Vector(0,0,0)
 
+		function META:GetWorldMatrix()
+			local m = self.entity.transform:GetMatrix() * self.entity.transform:GetScaleMatrix()
+			m:Translate(-self.entity.transform:GetCageCenter())
+
+			return m
+		end
+
 		function META:GetCageSizeMin()
 			return self.CageSizeMin
 		end
@@ -998,6 +1012,7 @@ do -- components
 				tr:Scale(max)
 				tr:Translate(-self.CageMax)
 
+
 				tr:Translate(self.CageMin)
 				tr:Scale(Vector(
 					((max.x + min.x-1)/max.x),
@@ -1104,7 +1119,7 @@ do -- components
 		function META:GetWorldSpaceBoundingBox()
 			local mins, maxs = self:GetBoundingBox()
 
-			local m = self.entity.transform:GetMatrix() * Matrix()
+			local m = self.entity.transform:GetMatrix()
 			--m:Translate(LerpVector(0.5, mins, maxs))
 
 			if self.angle_offset and self.angle_offset ~= Angle(0,0,0) then
@@ -1126,7 +1141,6 @@ do -- components
 
 			mmins = mmins * m
 			mmaxs = mmaxs * m
-
 
 			return mmins:GetTranslation(), mmaxs:GetTranslation()
 		end
@@ -1210,6 +1224,100 @@ do -- components
 			return self.HitPosition
 		end
 
+		local EPSILON   = 1 / 1048576
+
+		function Triangle_getIntersection( rayOrigin, rayDirection, v1,v2,v3 )
+
+			local rdx, rdy, rdz = rayDirection.x, rayDirection.y, rayDirection.z
+
+			-- find vectors for two edges sharing vert0
+			--local edge1 = self.y - self.x
+			--local edge2 = self.z - self.x
+			local e1x, e1y, e1z = (v2.x - v1.x), (v2.y - v1.y), (v2.z - v1.z)
+			local e2x, e2y, e2z = (v3.x - v1.x), (v3.y - v1.y), (v3.z - v1.z)
+
+			-- begin calculating determinant - also used to calculate U parameter
+			--local pvec = rayDirection:cross( edge2 )
+			local pvx = (rdy * e2z) - (rdz * e2y)
+			local pvy = (rdz * e2x) - (rdx * e2z)
+			local pvz = (rdx * e2y) - (rdy * e2x)
+
+			-- if determinant is near zero, ray lies in plane of triangle
+			--local det = edge1:dot( pvec )
+			local det = (e1x * pvx) + (e1y * pvy) + (e1z * pvz)
+
+			if (det > -EPSILON) and (det < EPSILON) then return end
+
+			local inv_det = 1 / det
+
+			-- calculate distance from vertex 0 to ray origin
+			--local tvec = rayOrigin - self.x
+			local tvx = rayOrigin.x - v1.x
+			local tvy = rayOrigin.y - v1.y
+			local tvz = rayOrigin.z - v1.z
+
+			-- calculate U parameter and test bounds
+			--local u = tvec:dot( pvec ) * inv_det
+			local u = ((tvx * pvx) + (tvy * pvy) + (tvz * pvz)) * inv_det
+			if (u < 0) or (u > 1) then return end
+
+			-- prepare to test V parameter
+			--local qvec = tvec:cross( edge1 )
+			local qvx = (tvy * e1z) - (tvz * e1y)
+			local qvy = (tvz * e1x) - (tvx * e1z)
+			local qvz = (tvx * e1y) - (tvy * e1x)
+
+			-- calculate V parameter and test bounds
+			--local v = rayDirection:dot( qvec ) * inv_det
+			local v = ((rdx * qvx) + (rdy * qvy) + (rdz * qvz)) * inv_det
+			if (v < 0) or (u + v > 1) then return end
+
+			-- calculate t, ray intersects triangle
+			--local hitDistance = edge2:dot( qvec ) * inv_det
+			local hitDistance = ((e2x * qvx) + (e2y * qvy) + (e2z * qvz)) * inv_det
+
+			-- only allow intersections in the forward ray direction
+			return (hitDistance >= 0) and hitDistance or nil
+
+		 end
+
+		local function triangle_intersect(a,b,c,p)
+			local u = b - a
+			local v = c - a
+			local w = p - a
+
+			debugoverlay.Cross(a, 1, 0,RED, true)
+			debugoverlay.Cross(b, 1, 0,RED, true)
+			debugoverlay.Cross(c, 1, 0,RED, true)
+
+			local vw = v:Cross(w)
+			local vu = v:Cross(u)
+
+			if vw:Dot(vu) < 0 then
+
+				return false
+			end
+
+			local uw = u:Cross(w)
+			local uv = u:Cross(v)
+
+			if uw:Dot(uv) < 0 then
+				return false
+			end
+
+			local d = uv:Length()
+			local r = vw:Length() / d
+			local t = uw:Length() / d
+
+			return r + t <= 1
+		end
+
+		local function transform_point(matrix, vec)
+			local m = matrix * Matrix()
+			m:Translate(vec)
+			return m:GetTranslation()
+		end
+
 		function META:CameraRayIntersect()
 			if not rawget(self.entity, "bounding_box") then return end
 
@@ -1235,9 +1343,38 @@ do -- components
 				min, max
 			)
 
-			--m:SetAngles(A)
+			local m =  self.entity.transform:GetWorldMatrix()
 
-			return a,b,c
+			if a then
+				if self.entity.model then
+					local mesh = pac999.models.GetMeshInfo(self.entity.model.Model:GetModel())
+					if mesh then
+						for _, data in ipairs(mesh.data) do
+							for i = 1, #data.triangles, 3 do
+								local v1 = data.triangles[i+0].pos
+								local v2 = data.triangles[i+1].pos
+								local v3 = data.triangles[i+2].pos
+
+								v1 = transform_point(m, v1)
+								v2 = transform_point(m, v2)
+								v3 = transform_point(m, v3)
+
+								local dist = Triangle_getIntersection(camera.GetViewMatrix():GetTranslation(), camera.GetViewRay(),  v3,v2,v1)
+								if dist then
+									--debugoverlay.Text(v1, tostring(dist), 0)
+									--debugoverlay.Text(v2, tostring(dist), 0)
+									--debugoverlay.Text(v3, tostring(dist), 0)
+									debugoverlay.Triangle(v1, v2, v3, 0, Color(0,255,0), true)
+									debugoverlay.Triangle(v3, v2, v1, 0, Color(0,255,0), true)
+									return a,b,c
+								end
+							end
+						end
+					else
+						return a,b,c
+					end
+				end
+			end
 		end
 
 		META:Register()
@@ -1435,7 +1572,7 @@ do -- components
 			return self.entity.bounding_box:GetWorldSpaceCenter() - self.entity:GetMatrix():GetTranslation()
 		end
 
-		local dist = 100
+		local dist = 150
 		local thickness = 0.5
 
 		function META:SetupViewTranslation()
@@ -1495,9 +1632,6 @@ do -- components
 		end
 
 		function META:SetupTranslation()
-			local disc = "models/hunter/tubes/tube4x4x025d.mdl"
-			local visual_size = 0.6
-			local scale = 0.25
 			local dist = dist * 0.5
 			local thickness = 1.5
 			local model = "models/hunter/misc/cone1x1.mdl"
@@ -1872,7 +2006,7 @@ if me then
 			node:SetName(i)
 			i = i + 1
 			node:SetPosition(Vector(x,y,z))
-			node:SetModel("models/hunter/blocks/cube075x075x075.mdl")
+			node:SetModel("models/props_c17/lampShade001a.mdl")
 			return node
 		end
 
@@ -1893,12 +2027,12 @@ if me then
 
 		for i = 0, 4 do
 			local m = n(80 + (i*-35.5), 80+38*3, 10)
-			m:SetAlpha(0.99)
+			m:SetAlpha(1)
 			m:SetCageSizeMax(Vector(0,0,0))
 
 			local m = n(80 + (i*35.5), 80+38*3, 10)
 			m:SetCageSizeMax(Vector(0,0,0))
-			m:SetAlpha(0.99)
+			m:SetAlpha(1)
 			m:SetAngles(Angle(45,0,0))
 		end
 
