@@ -1765,7 +1765,27 @@ do -- components
 
 						local m = m * Matrix()
 						m:Translate(self:GetCenter())
-						m = m * local_start_rotation:GetInverse() * local_drag_rotation
+						local ang = (local_start_rotation:GetInverse() * local_drag_rotation):GetAngles()
+
+						if input.IsKeyDown(KEY_LSHIFT) then
+							if axis == "GetRight" then
+								ang.p = math.Round(ang.p / 45) * 45
+							end
+
+							if axis == "GetUp" then
+								ang.y = math.Round(ang.y / 45) * 45
+							end
+
+							if axis == "GetForward" then
+								ang.r = math.Round(ang.r / 45) * 45
+							end
+						end
+
+						local rot = Matrix()
+						rot:SetAngles(ang)
+						local ang = (m * rot):GetAngles()
+
+						m:SetAngles(ang)
 						m:Translate(-self:GetCenter())
 
 						self:SetWorldMatrix(m)
