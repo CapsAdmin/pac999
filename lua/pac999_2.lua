@@ -950,12 +950,31 @@ do -- components
 			return self:GetWorldMatrix() * lmat
 		end
 
+		function META:GetParentMatrix()
+			local wmat = self:GetMatrix()
+
+			if self.entity.node and self.entity.node:GetParent() then
+				wmat = self.entity.node:GetParent().entity.transform:GetMatrix()
+			end
+
+			return wmat
+		end
+
 		function META:WorldToLocalMatrix(pos, ang)
 			local lmat = Matrix()
-			lmat:SetTranslation(pos)
-			lmat:SetAngles(ang)
 
-			return self:GetWorldMatrix():GetInverse() * lmat
+			if pos then
+				lmat:SetTranslation(pos)
+			end
+
+			if ang then
+				lmat:SetAngles(ang)
+			end
+
+			local wmat = self:GetParentMatrix()
+
+
+			return wmat:GetInverse() * lmat
 		end
 
 		function META:LocalToWorld(pos, ang)
@@ -966,6 +985,14 @@ do -- components
 		function META:WorldToLocal(pos, ang)
 			local wmat = self:WorldToLocalMatrix(pos, ang)
 			return wmat:GetTranslation(), wmat:GetAngles()
+		end
+
+		function META:WorldToLocalPosition(pos)
+			return self:WorldToLocalMatrix(pos):GetTranslation()
+		end
+
+		function META:WorldToLocalAngles(ang)
+			return self:WorldToLocalMatrix(nil, ang):GetAngles()
 		end
 
 		function META:GetWorldMatrix()
@@ -1197,6 +1224,38 @@ do -- components
 			self:InvalidateMatrix()
 		end
 
+		function META:SetWorldPosition(pos)
+			self:SetPosition(self:WorldToLocalPosition(pos))
+		end
+
+		function META:GetUp()
+			return self:GetMatrix():GetUp()
+		end
+
+		function META:GetRight()
+			return self:GetMatrix():GetRight()
+		end
+
+		function META:GetForward()
+			return self:GetMatrix():GetForward()
+		end
+
+		function META:GetBackward()
+			return self:GetMatrix():GetForward() * -1
+		end
+
+		function META:GetLeft()
+			return self:GetMatrix():GetRight() * -1
+		end
+
+		function META:GetDown()
+			return self:GetMatrix():GetUp() * -1
+		end
+
+		function META:SetWorldAngles(pos)
+			self:SetAngles(self:WorldToLocalAngles(pos))
+		end
+
 		function META:GetWorldPosition()
 			return self:GetMatrix():GetTranslation()
 		end
@@ -1212,10 +1271,6 @@ do -- components
 
 		function META:GetPosition()
 			return self.Transform:GetTranslation()
-		end
-
-		function META:GetWorldPosition()
-			return self:GetMatrix():GetTranslation()
 		end
 
 		function META:GetLocalPosition()
@@ -1816,28 +1871,35 @@ do -- components
 				end
 			end
 
-			local function add_grabbable(dir, gizmo_angle, gizmo_color, axis, axis2)
-				local ent = create_grab(self, model, dir*dist, build_callback(axis, axis2))
-				ent:SetAngles(gizmo_angle)
-				ent:SetLocalScale(Vector(1,1,1)*0.25)
-				ent:SetColor(gizmo_color)
+			local function add_grabbable(gizmo_color, axis, axis2)
+				local m = self.entity:GetWorldMatrix()
+				local dir = m[axis2](m)*dist
+				local wpos = self.entity:GetWorldPosition()
 
-				local ent = create_grab(self, model, dir*dist, build_callback(axis, axis2))
-				if axis2 == "GetUp" then
-					ent:SetAngles(gizmo_angle + Angle(180,0,0))
-				else
-					ent:SetAngles(gizmo_angle + Angle(0,180,0))
+				do
+					local ent = create_grab(self, model, vector_origin, build_callback(axis, axis2))
+					ent:SetWorldPosition(self.entity:NearestPoint(wpos + dir))
+					ent:SetWorldAngles(dir:Angle() + Angle(90,0,0))
+					ent:SetLocalScale(Vector(1,1,1)*0.25)
+					ent:SetColor(gizmo_color)
+					ent:SetWorldPosition(ent:GetWorldPosition() + ent:GetUp() * ent:GetBoundingRadius()*2.15)
 				end
-				ent:SetLocalScale(Vector(1,1,1)*0.25)
-				ent:SetColor(gizmo_color)
-				ent:SetTRScale(Vector(-1,-1,-1))
+
+				do
+					local ent = create_grab(self, model, vector_origin, build_callback(axis, axis2))
+					ent:SetWorldPosition(self.entity:NearestPoint(wpos - dir))
+					ent:SetWorldAngles(dir:Angle() + Angle(-90,0,0))
+					ent:SetLocalScale(Vector(1,1,1)*0.25)
+					ent:SetColor(gizmo_color)
+					ent:SetWorldPosition(ent:GetWorldPosition() + ent:GetUp() * ent:GetBoundingRadius()*2.15)
+				end
 
 				return ent
 			end
 
-			add_grabbable(Vector(1,0,0), Angle(90,0,0), RED, "GetRight", "GetForward")
-			add_grabbable(Vector(0,1,0), Angle(0,0,-90), GREEN, "GetForward", "GetRight")
-			add_grabbable(Vector(0,0,1), Angle(0,0,0), BLUE, "GetRight", "GetUp")
+			add_grabbable(RED, "GetRight", "GetForward")
+			add_grabbable(GREEN, "GetForward", "GetRight")
+			add_grabbable(BLUE, "GetRight", "GetUp")
 		end
 
 		function META:SetupRotation()
@@ -2116,6 +2178,8 @@ do -- components
 				self.grab_entities = {}
 			end
 			self.gizmoenabled = b
+
+			--self.entity.transform:SetWorldPosition(LocalPlayer():EyePos())
 		end
 
 		function META.EVENTS:PointerHover()
@@ -2174,20 +2238,24 @@ if me then
 
 	if true then
 		local ent = pac999.scene.AddNode(world)
-		ent:SetModel("models/props_lab/blastdoor001c.mdl")
+		ent:SetModel("models/hunter/blocks/cube025x025x025.mdl")
 		ent:SetName("test")
 		ent:SetPosition(Vector(100, 1, 1))
 		--ent:EnableGizmo(true)
-		ent:SetCageSizeMin(Vector(100,0,0))
-		ent:SetCageSizeMax(Vector(100,0,0))
-		ent:SetLocalScale(Vector(1,4,4))
-		ent:SetAngles(Angle(45,45,45))
-
-		local pos, ang = ent:WorldToLocal(EyePos(), EyeAngles())
+		--ent:SetCageSizeMin(Vector(100,0,0))
+		--ent:SetCageSizeMax(Vector(100,0,0))
+		--ent:SetLocalScale(Vector(1,1,1))
+		--ent:SetAngles(Angle(45,45,45))
+		if false then
 		print(pos, ang)
-		--local ent = pac999.scene.AddNode(ent)
-		--ent:SetPosition(pos)
-		--ent:SetAngles(ang)
+		local ent = pac999.scene.AddNode(ent)
+		ent:SetModel("models/hunter/blocks/cube025x025x025.mdl")
+		local pos, ang = ent:WorldToLocal(EyePos(), EyeAngles())
+		ent:SetPosition(pos)
+		ent:SetAngles(ang)
+		end
+		--ent:SetWorldPosition(EyePos())
+		--ent:SetWorldAngles(EyeAngles())
 	end
 
 	if false then
@@ -2272,6 +2340,7 @@ if me then
 				local m = tr.Entity:GetWorldTransformMatrix()
 				m:Translate(node.transform:GetCageCenter())
 				node.transform:SetWorldMatrix(m)
+				node:EnableGizmo(true)
 				tr.Entity.LOL = node
 			end
 		end
