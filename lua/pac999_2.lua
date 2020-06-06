@@ -1195,6 +1195,14 @@ do -- components
 			self:InvalidateMatrix()
 		end
 
+		function META:GetWorldPosition()
+			return self:GetMatrix():GetTranslation()
+		end
+
+		function META:GetWorldAngles()
+			return self:GetMatrix():GetAngles()
+		end
+
 		function META:SetPosition(v)
 			self.Transform:SetTranslation(v)
 			self:InvalidateMatrix()
@@ -1248,14 +1256,16 @@ do -- components
 
 		local META = pac999.entity.ComponentTemplate("bounding_box", {"transform", "node"})
 
-		function META:GetCorrectedBoundingBox()
+		function META:GetCorrectedMin()
 			local min = self.Min
 			local max = self.Max
-			-- TODO: some phx models have weird bounding boxes where min.x is higher than max.x but not min.y
-			local l = Vector(math.min(min.x, max.x), math.min(min.y, max.y), math.min(min.z, max.z))
-			local h = Vector(math.max(min.x, max.x), math.max(min.y, max.y), math.max(min.z, max.z))
+			return Vector(math.min(min.x, max.x), math.min(min.y, max.y), math.min(min.z, max.z))
+		end
 
-			return l, h
+		function META:GetCorrectedMax()
+			local min = self.Min
+			local max = self.Max
+			return Vector(math.max(min.x, max.x), math.max(min.y, max.y), math.max(min.z, max.z))
 		end
 
 		function META:NearestPoint(point)
@@ -1263,7 +1273,7 @@ do -- components
 			local pos = m:GetTranslation()
 			local ang = m:GetAngles()
 
-			local min, max = self:GetCorrectedBoundingBox()
+			local min, max = self:GetCorrectedMin(), self:GetCorrectedMax()
 			local m = self.entity.transform:GetMatrix()*Matrix() * self.entity.transform:GetScaleMatrix()
 
 			local center = LerpVector(0.5, min, max)
@@ -1304,59 +1314,62 @@ do -- components
 			self.angle_offset = angle_offset
 		end
 
-		function META:GetBoundingBox()
-			local m = self.entity.transform:GetMatrix() * Matrix()
-
-			local min, max = self.entity.bounding_box:GetWorldSpaceBoundingBox()
-
-			min = min - m:GetTranslation()
-			max = max - m:GetTranslation()
-
-			return min, max
+		function META:GetBoundingMin()
+			return self.entity.bounding_box:GetWorldMin() - self.entity.transform:GetMatrix():GetTranslation()
 		end
 
-		-- TODO: rotation doesn't work properly
-		function META:GetWorldSpaceBoundingBox()
-			local min, max = self:GetCorrectedBoundingBox()
-			local center = LerpVector(0.5, min, max)
+		function META:GetBoundingMax()
+			return self.entity.bounding_box:GetWorldMax() - self.entity.transform:GetMatrix():GetTranslation()
+		end
+
+		function META:GetCenter()
+			local min, max = self:GetCorrectedMin(), self:GetCorrectedMax()
+			return LerpVector(0.5, min, max)
+		end
+
+		function META:GetWorldMin()
+			local min = self:GetCorrectedMin()
+			local center = self:GetCenter()
 			min = min - center
-			max = max - center
 
 			local m = self.entity.transform:GetMatrix() * Matrix()
-			--m:SetScale(Vector(1,1,1))
-
 			local scale = self.entity.transform:GetScaleMatrix() * Matrix()
 
 			min = min * scale:GetScale() * m:GetScale()
+
+			local tr = Matrix()
+			tr:Translate(scale:GetTranslation() * m:GetScale())
+			tr:Translate(min)
+			tr = tr * m
+
+			return tr:GetTranslation()
+		end
+
+		-- TODO: rotation doesn't work properly
+		function META:GetWorldMax()
+			local max = self:GetCorrectedMax()
+			local center = self:GetCenter()
+			max = max - center
+
+			local m = self.entity.transform:GetMatrix() * Matrix()
+			local scale = self.entity.transform:GetScaleMatrix() * Matrix()
+
 			max = max * scale:GetScale() * m:GetScale()
-			do
-				local tr = Matrix()
-				tr:Translate(scale:GetTranslation()*m:GetScale())
-				tr:Translate(min)
-				tr = tr * m
-				min = tr:GetTranslation()
-			end
 
-			do
-				local tr = Matrix()
-				tr:Translate(scale:GetTranslation()*m:GetScale())
-				tr:Translate(max)
-				tr = tr * m
-				max = tr:GetTranslation()
-			end
+			local tr = Matrix()
+			tr:Translate(scale:GetTranslation() * m:GetScale())
+			tr:Translate(max)
+			tr = tr * m
 
-			--print(min, max)
-
-			return min, max
+			return tr:GetTranslation()
 		end
 
 		function META:GetWorldSpaceCenter()
-			return LerpVector(0.5, self:GetWorldSpaceBoundingBox())
+			return LerpVector(0.5, self:GetWorldMin(), self:GetWorldMax())
 		end
 
 		function META:GetBoundingRadius()
-			local min, max = self:GetWorldSpaceBoundingBox()
-			return min:Distance(max)/2
+			return self:GetWorldMin():Distance(self:GetWorldMax())/2
 		end
 
 		META:Register()
@@ -1405,10 +1418,7 @@ do -- components
 		end
 
 		function META:CameraRayIntersect()
-			local min, max = self.entity:GetBoundingBox()
-
-			local m = self.entity:GetMatrix()
-			local hit_pos, normal, fraction = camera.IntersectRayWithOBB(m:GetTranslation(), m:GetAngles(), min, max)
+			local hit_pos, normal, fraction = camera.IntersectRayWithOBB(self.entity:GetWorldPosition(), self.entity:GetWorldAngles(), self.entity:GetBoundingMin(), self.entity:GetBoundingMax())
 			local m = self.entity:GetWorldMatrix()
 
 			if hit_pos then
@@ -1423,9 +1433,9 @@ do -- components
 
 				for _, data in ipairs(mesh.data) do
 					for i = 1, #data.triangles, 3 do
-						local v1 = utility.TransformVector(m, data.triangles[i+0].pos)
-						local v2 = utility.TransformVector(m, data.triangles[i+1].pos)
-						local v3 = utility.TransformVector(m, data.triangles[i+2].pos)
+						local v1 = utility.TransformVector(m, data.triangles[i + 0].pos)
+						local v2 = utility.TransformVector(m, data.triangles[i + 1].pos)
+						local v3 = utility.TransformVector(m, data.triangles[i + 2].pos)
 
 						local dist = utility.TriangleIntersect(camera.GetViewMatrix():GetTranslation(), camera.GetViewRay(),  v3, v2, v1)
 
@@ -2012,7 +2022,8 @@ do -- components
 			local function add_grabbable(dir, gizmo_angle, gizmo_color, axis, axis2)
 
 				local function update(ent, dir)
-					local min, max = self.entity.bounding_box:GetWorldSpaceBoundingBox()
+					local min = self.entity.bounding_box:GetWorldMin()
+					local max = self.entity.bounding_box:GetWorldMax()
 
 					--ent:SetPosition(max)
 
