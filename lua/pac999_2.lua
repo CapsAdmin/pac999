@@ -13,6 +13,7 @@
 ]]
 
 local TEST = true
+local DEBUG = true
 
 if pac999_models then
 	hook.Remove("RenderScene", "pac_999")
@@ -214,29 +215,27 @@ do
 	function camera.IntersectRayWithOBB(pos, ang, min, max)
 		local view = camera.GetViewMatrix()
 
-		-- TODO: some phx models have weird bounding boxes where min.x is higher than max.x but not min.y
-		local l = Vector(math.min(min.x, max.x), math.min(min.y, max.y), math.min(min.z, max.z))
-		local h = Vector(math.max(min.x, max.x), math.max(min.y, max.y), math.max(min.z, max.z))
-
-		local a,b,c = util.IntersectRayWithOBB(
+		local hit_pos, normal, fraction = util.IntersectRayWithOBB(
 			view:GetTranslation(),
 			view:GetForward() * 32000,
 			pos,
 			ang,
-			l,
-			h
+			min,
+			max
 		)
 
-		debugoverlay.BoxAngles(
-			pos,
-			l,
-			h,
-			ang,
-			0,
-			Color(255,0,0, a and 50 or 0), true
-		)
+		if DEBUG then
+			debugoverlay.BoxAngles(
+				pos,
+				min,
+				max,
+				ang,
+				0,
+				Color(255,0,0, a and 50 or 0), true
+			)
+		end
 
-		return a,b,c
+		return hit_pos, normal, fraction
 	end
 
 	function camera.GetViewRay()
@@ -270,8 +269,8 @@ do
 	end
 
 	local function sort_by_camera_distance(a, b)
-		return a.entity.transform:GetMatrix():GetTranslation():Distance(EyePos()) <
-			b.entity.transform:GetMatrix():GetTranslation():Distance(EyePos())
+		return a.entity.transform:GetWorldPosition():Distance(EyePos()) <
+			b.entity.transform:GetWorldPosition():Distance(EyePos())
 	end
 
 	function input.Update()
@@ -358,7 +357,10 @@ do
 				temp:DrawModel()
 				local m = temp:GetBoneMatrix(0)
 				if m then
+					--m = m:GetInverse()
+
 					angle_offset = m:GetAngles()
+					angle_offset.r = 0
 				end
 				temp:Remove()
 
@@ -1241,7 +1243,7 @@ do -- components
 		end
 
 		local function sort(a, b)
-			return a:GetMatrix():GetTranslation():Distance(EyePos()) < b:GetMatrix():GetTranslation():Distance(EyePos())
+			return a:GetWorldPosition():Distance(EyePos()) < b:GetWorldPosition():Distance(EyePos())
 		end
 
 		function META:GetUpdateList()
@@ -1257,14 +1259,26 @@ do -- components
 		local META = pac999.entity.ComponentTemplate("bounding_box", {"transform", "node"})
 
 		function META:GetCorrectedMin()
-			local min = self.Min
-			local max = self.Max
+			local min = self.Min * 1
+			local max = self.Max * 1
+
+			if self.angle_offset then
+				min:Rotate(self.angle_offset)
+				max:Rotate(self.angle_offset)
+			end
+
 			return Vector(math.min(min.x, max.x), math.min(min.y, max.y), math.min(min.z, max.z))
 		end
 
 		function META:GetCorrectedMax()
-			local min = self.Min
-			local max = self.Max
+			local min = self.Min * 1
+			local max = self.Max * 1
+
+			if self.angle_offset then
+				min:Rotate(self.angle_offset)
+				max:Rotate(self.angle_offset)
+			end
+
 			return Vector(math.max(min.x, max.x), math.max(min.y, max.y), math.max(min.z, max.z))
 		end
 
@@ -1272,15 +1286,8 @@ do -- components
 			local m = self.entity.transform:GetMatrix()
 			local pos = m:GetTranslation()
 			local ang = m:GetAngles()
-
-			local min, max = self:GetCorrectedMin(), self:GetCorrectedMax()
-			local m = self.entity.transform:GetMatrix()*Matrix() * self.entity.transform:GetScaleMatrix()
-
-			local center = LerpVector(0.5, min, max)
-			min = min - center
-			max = max - center
-			min = min * m:GetScale()
-			max = max * m:GetScale()
+			local min = self:GetMin()
+			local max = self:GetMax()
 
 			local dir = pos - point
 
@@ -1296,10 +1303,10 @@ do -- components
 			debugoverlay.Cross(point, 10,0)
 
 			if hit_pos then
-				debugoverlay.Line(point, hit_pos, 1, Color(0,0,255,255))
-				debugoverlay.Line(hit_pos, point + dir, 1, Color(0,255,0,10),true)
+				debugoverlay.Line(point, hit_pos, 0, Color(0,0,255,255))
+				debugoverlay.Line(hit_pos, point + dir, 0, Color(0,255,0,10),true)
 			else
-				debugoverlay.Line(point, point + dir, 1, Color(255,0,0,255),true)
+				debugoverlay.Line(point, point + dir, 0, Color(255,0,0,255),true)
 			end
 
 			return hit_pos
@@ -1308,23 +1315,24 @@ do -- components
 		META.Min = Vector(-1,-1,-1)
 		META.Max = Vector(1,1,1)
 
-		function META:SetBoundingBox(min, max, angle_offset)
-			self.Min = min
-			self.Max = max
-			self.angle_offset = angle_offset
+		function META:SetMin(vec)
+			self.Min = vec
 		end
 
-		function META:GetBoundingMin()
-			return self.entity.bounding_box:GetWorldMin() - self.entity.transform:GetMatrix():GetTranslation()
+		function META:SetMax(vec)
+			self.Max = vec
 		end
 
-		function META:GetBoundingMax()
-			return self.entity.bounding_box:GetWorldMax() - self.entity.transform:GetMatrix():GetTranslation()
+		function META:SetAngleOffset(ang)
+			self.angle_offset = ang
 		end
 
-		function META:GetCenter()
-			local min, max = self:GetCorrectedMin(), self:GetCorrectedMax()
-			return LerpVector(0.5, min, max)
+		function META:GetMin()
+			return self.entity.bounding_box:GetWorldMin() - self.entity.transform:GetWorldPosition()
+		end
+
+		function META:GetMax()
+			return self.entity.bounding_box:GetWorldMax() - self.entity.transform:GetWorldPosition()
 		end
 
 		function META:GetWorldMin()
@@ -1335,8 +1343,8 @@ do -- components
 			local m = self.entity.transform:GetMatrix() * Matrix()
 			local scale = self.entity.transform:GetScaleMatrix() * Matrix()
 
-			min = min * scale:GetScale() * m:GetScale()
 
+			min = min * scale:GetScale() * m:GetScale()
 			local tr = Matrix()
 			tr:Translate(scale:GetTranslation() * m:GetScale())
 			tr:Translate(min)
@@ -1354,8 +1362,8 @@ do -- components
 			local m = self.entity.transform:GetMatrix() * Matrix()
 			local scale = self.entity.transform:GetScaleMatrix() * Matrix()
 
-			max = max * scale:GetScale() * m:GetScale()
 
+			max = max * scale:GetScale() * m:GetScale()
 			local tr = Matrix()
 			tr:Translate(scale:GetTranslation() * m:GetScale())
 			tr:Translate(max)
@@ -1364,12 +1372,17 @@ do -- components
 			return tr:GetTranslation()
 		end
 
-		function META:GetWorldSpaceCenter()
-			return LerpVector(0.5, self:GetWorldMin(), self:GetWorldMax())
+		function META:GetCenter()
+			local min, max = self:GetCorrectedMin(), self:GetCorrectedMax()
+			return LerpVector(0.5, min, max)
 		end
 
 		function META:GetBoundingRadius()
-			return self:GetWorldMin():Distance(self:GetWorldMax())/2
+			return self:GetMin():Distance(self:GetMax())/2
+		end
+
+		function META:GetWorldCenter()
+			return LerpVector(0.5, self:GetWorldMin(), self:GetWorldMax())
 		end
 
 		META:Register()
@@ -1418,8 +1431,12 @@ do -- components
 		end
 
 		function META:CameraRayIntersect()
-			local hit_pos, normal, fraction = camera.IntersectRayWithOBB(self.entity:GetWorldPosition(), self.entity:GetWorldAngles(), self.entity:GetBoundingMin(), self.entity:GetBoundingMax())
-			local m = self.entity:GetWorldMatrix()
+			local hit_pos, normal, fraction = camera.IntersectRayWithOBB(
+				self.entity.transform:GetWorldPosition(),
+				self.entity.transform:GetWorldAngles(),
+				self.entity.bounding_box:GetMin(),
+				self.entity.bounding_box:GetMax()
+			)
 
 			if hit_pos then
 				if not self.entity.model then
@@ -1427,24 +1444,37 @@ do -- components
 				end
 
 				local mesh = models.GetMeshInfo(self.entity.model.Model:GetModel())
+
 				if not mesh then
 					return hit_pos, normal, fraction
 				end
 
+				local world_matrix = self.entity:GetWorldMatrix()
+
 				for _, data in ipairs(mesh.data) do
 					for i = 1, #data.triangles, 3 do
-						local v1 = utility.TransformVector(m, data.triangles[i + 0].pos)
-						local v2 = utility.TransformVector(m, data.triangles[i + 1].pos)
-						local v3 = utility.TransformVector(m, data.triangles[i + 2].pos)
+						local v1 = data.triangles[i + 0].pos * 1
+						local v2 = data.triangles[i + 1].pos * 1
+						local v3 = data.triangles[i + 2].pos * 1
+
+						if self.entity.bounding_box.angle_offset then
+							v1:Rotate(self.entity.bounding_box.angle_offset)
+							v2:Rotate(self.entity.bounding_box.angle_offset)
+							v3:Rotate(self.entity.bounding_box.angle_offset)
+						end
+
+						v1 = utility.TransformVector(world_matrix, v1)
+						v2 = utility.TransformVector(world_matrix, v2)
+						v3 = utility.TransformVector(world_matrix, v3)
 
 						local dist = utility.TriangleIntersect(camera.GetViewMatrix():GetTranslation(), camera.GetViewRay(),  v3, v2, v1)
 
 						if dist then
-							--debugoverlay.Text(v1, tostring(dist), 0)
-							--debugoverlay.Text(v2, tostring(dist), 0)
-							--debugoverlay.Text(v3, tostring(dist), 0)
-							debugoverlay.Triangle(v1, v2, v3, 0, Color(0,255,0), true)
-							debugoverlay.Triangle(v3, v2, v1, 0, Color(0,255,0), true)
+							if DEBUG then
+								debugoverlay.Triangle(v1, v2, v3, 0, Color(0,255,0,50), true)
+								debugoverlay.Triangle(v3, v2, v1, 0, Color(0,255,0,50), true)
+							end
+
 							return hit_pos, normal, fraction
 						end
 					end
@@ -1473,6 +1503,29 @@ do -- components
 			self.IgnoreZ = b
 		end
 
+		local function blend(color, alpha, brightness)
+			local r,g,b = 1,1,1
+			local a = 1
+
+			if color then
+				r = color.r / 255
+				g = color.g / 255
+				b = color.b / 255
+			end
+
+			if alpha then
+				a = alpha
+			end
+
+			if brightness then
+				r = r * brightness
+				g = g * brightness
+				b = b * brightness
+			end
+
+			return r,g,b,a
+		end
+
 		function META:Render3D()
 			if not self.model_set then return end
 			local mdl = self.Model
@@ -1490,28 +1543,10 @@ do -- components
 				cam.IgnoreZ(true)
 			end
 
-			local r,g,b = 1,1,1
-			local a = 1
-
-
-			if self.Color then
-				r = self.Color.r/255
-				g = self.Color.g/255
-				b = self.Color.b/255
-			end
-
-			if self.Alpha then
-				a = self.Alpha
-			end
+			local r,g,b,a =  blend(self.Color, self.Alpha, self.Brightness)
 
 			if self.Material then
 				render.MaterialOverride(self.Material)
-			end
-
-			if self.Brightness then
-				r = r * self.Brightness
-				g = g * self.Brightness
-				b = b * self.Brightness
 			end
 
 			if self.entity:HasComponent("input") and self.entity.input.Hovered then
@@ -1551,7 +1586,9 @@ do -- components
 			local data = models.GetMeshInfo(self.Model:GetModel())
 
 			if self.entity.bounding_box then
-				self.entity.bounding_box:SetBoundingBox(data.min, data.max, data.angle_offset)
+				self.entity.bounding_box:SetMin(data.min)
+				self.entity.bounding_box:SetMax(data.max)
+				self.entity.bounding_box:SetAngleOffset(data.angle_offset)
 			end
 
 			if self.entity.transform then
@@ -1642,7 +1679,7 @@ do -- components
 		end
 
 		function META:GetCenter()
-			return self.entity.bounding_box:GetWorldSpaceCenter() - self.entity:GetMatrix():GetTranslation()
+			return self.entity.bounding_box:GetWorldCenter() - self.entity:GetWorldPosition()
 		end
 
 		local dist = 150
@@ -2009,6 +2046,10 @@ do -- components
 						end
 						local dist = (plane_pos - center_pos):Dot( m[axis2](m))
 
+						local reverse = reverse
+						if axis2 == "GetRight" then
+							reverse = not reverse
+						end
 
 						if reverse then
 							self.entity.transform:SetCageSizeMax(cage_min_start - (dir * dist))
@@ -2025,24 +2066,11 @@ do -- components
 					local min = self.entity.bounding_box:GetWorldMin()
 					local max = self.entity.bounding_box:GetWorldMax()
 
-					--ent:SetPosition(max)
+					local box_pos = self.entity:NearestPoint(self.entity:GetWorldPosition() + dir * 1000)
 
-					local m = self.entity.transform:GetMatrix()
-					local pos = m:GetTranslation()
+					if not box_pos then return end
 
-					local box_pos = self.entity:NearestPoint(pos + m:GetUp() * 1000)
-
-					--local pos, ang = self.entity:WorldToLocal(box_pos, Angle())
-
-					local pos, ang = self.entity:WorldToLocal(EyePos(), EyeAngles())
-
-					-- TODO: the position seems okay, but the scale boxes are not being positioned properly
-					if not self.LOL or not self.LOL[ent] then
-						ent:SetPosition(pos)
-						self.LOL = self.LOL or {}
-						self.LOL[ent] = true
-					end
-
+					local pos, ang = self.entity:WorldToLocal(box_pos, self.entity:GetWorldAngles())
 
 					--ent:SetPosition(pos)
 				end
@@ -2050,13 +2078,19 @@ do -- components
 				local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2))
 				ent:SetLocalScale(Vector(1,1,1)*scale)
 				ent:SetColor(gizmo_color)
-				ent:AddEvent("Update", function(ent) update(ent, dir) end)
+				ent:AddEvent("Update", function(ent)
+					local m = self.entity.transform:GetMatrix()
+					update(ent, m[axis2](m))
+				end)
 
 				local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2, true))
 				ent:SetLocalScale(Vector(1,1,1)*scale)
 				ent:SetColor(gizmo_color)
 
-				ent:AddEvent("Update", function(ent) update(ent, dir*-1) end)
+				ent:AddEvent("Update", function(ent)
+					local m = self.entity.transform:GetMatrix()
+					update(ent, m[axis2](m)*-1)
+				end)
 
 				return ent
 			end
@@ -2140,7 +2174,7 @@ if me then
 
 	if true then
 		local ent = pac999.scene.AddNode(world)
-		ent:SetModel("models/hunter/blocks/cube025x025x025.mdl")
+		ent:SetModel("models/props_lab/blastdoor001c.mdl")
 		ent:SetName("test")
 		ent:SetPosition(Vector(100, 1, 1))
 		--ent:EnableGizmo(true)
@@ -2227,7 +2261,7 @@ if me then
 		for _, obj in ipairs(pac999.entity.GetAll()) do
 			obj:FireEvent("Update")
 		end
-		do return end
+
 		local tr = LocalPlayer():GetEyeTrace()
 
 		if tr.Entity:IsValid() and tr.Entity:GetModel() and not tr.Entity:IsPlayer() then
@@ -2237,7 +2271,7 @@ if me then
 
 				local m = tr.Entity:GetWorldTransformMatrix()
 				m:Translate(node.transform:GetCageCenter())
-				node:SetWorldMatrix(m)
+				node.transform:SetWorldMatrix(m)
 				tr.Entity.LOL = node
 			end
 		end
