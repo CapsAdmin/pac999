@@ -13,7 +13,7 @@
 ]]
 
 local TEST = true
-local DEBUG = true
+local DEBUG = false
 
 if pac999_models then
 	hook.Remove("RenderScene", "pac_999")
@@ -1121,20 +1121,22 @@ do -- components
 			end
 
 			if false then
-				debugoverlay.Text(self.Matrix:GetTranslation(), tostring(self), 0)
-				debugoverlay.Cross(self.Matrix:GetTranslation(), 2, 0, GREEN, true)
+				if DEBUG then
+					debugoverlay.Text(self.Matrix:GetTranslation(), tostring(self), 0)
+					debugoverlay.Cross(self.Matrix:GetTranslation(), 2, 0, GREEN, true)
 
-				local min, max = self:GetCageMinMax()
+					local min, max = self:GetCageMinMax()
 
-				debugoverlay.BoxAngles(
-					self.Matrix:GetTranslation(),
-					min * self.Matrix:GetScale(),
-					max * self.Matrix:GetScale(),
-					self.Matrix:GetAngles(),
-					0,
-					Color(0,255,0,0),
-					true
-				)
+					debugoverlay.BoxAngles(
+						self.Matrix:GetTranslation(),
+						min * self.Matrix:GetScale(),
+						max * self.Matrix:GetScale(),
+						self.Matrix:GetAngles(),
+						0,
+						Color(0,255,0,0),
+						true
+					)
+				end
 			end
 
 			return self.Matrix
@@ -1260,6 +1262,10 @@ do -- components
 			return self:GetMatrix():GetTranslation()
 		end
 
+		function META:GetAngles()
+			return self.Transform:GetAngles()
+		end
+
 		function META:GetWorldAngles()
 			return self:GetMatrix():GetAngles()
 		end
@@ -1279,6 +1285,11 @@ do -- components
 
 		function META:SetAngles(a)
 			self.Transform:SetAngles(a)
+			self:InvalidateMatrix()
+		end
+
+		function META:Rotate(a)
+			self.Transform:Rotate(a)
 			self:InvalidateMatrix()
 		end
 
@@ -1355,13 +1366,15 @@ do -- components
 				max
 			)
 
-			debugoverlay.Cross(point, 10,0)
+			if DEBUG then
+				debugoverlay.Cross(point, 10,0)
 
-			if hit_pos then
-				debugoverlay.Line(point, hit_pos, 0, Color(0,0,255,255))
-				debugoverlay.Line(hit_pos, point + dir, 0, Color(0,255,0,10),true)
-			else
-				debugoverlay.Line(point, point + dir, 0, Color(255,0,0,255),true)
+				if hit_pos then
+					debugoverlay.Line(point, hit_pos, 0, Color(0,0,255,255))
+					debugoverlay.Line(hit_pos, point + dir, 0, Color(0,255,0,10),true)
+				else
+					debugoverlay.Line(point, point + dir, 0, Color(255,0,0,255),true)
+				end
 			end
 
 			return hit_pos
@@ -1737,7 +1750,7 @@ do -- components
 			return self.entity.bounding_box:GetWorldCenter() - self.entity:GetWorldPosition()
 		end
 
-		local dist = 150
+		local dist = 70
 		local thickness = 0.5
 
 		function META:SetupViewTranslation()
@@ -1871,25 +1884,26 @@ do -- components
 				end
 			end
 
-			local function add_grabbable(gizmo_color, axis, axis2)
+			local function add_grabbable(gizmo_color, axis, axis2, axis3)
 				local m = self.entity:GetWorldMatrix()
 				local dir = m[axis2](m)*dist
 				local wpos = self.entity:GetWorldPosition()
 
 				do
 					local ent = create_grab(self, model, vector_origin, build_callback(axis, axis2))
-					ent:SetWorldPosition(self.entity:NearestPoint(wpos + dir))
-					ent:SetWorldAngles(dir:Angle() + Angle(90,0,0))
 					ent:SetLocalScale(Vector(1,1,1)*0.25)
+					ent:SetWorldPosition(self.entity:NearestPoint(wpos + dir) + dir)
+					ent:SetAngles(ent:GetPosition():AngleEx(Vector(0,0,1)) + Angle(90,0,0))
 					ent:SetColor(gizmo_color)
-					ent:SetWorldPosition(ent:GetWorldPosition() + ent:GetUp() * ent:GetBoundingRadius()*2.15)
+					ent:SetWorldPosition(ent:GetWorldPosition() + ent:GetUp() * ent:GetBoundingRadius()*2)
 				end
 
 				do
 					local ent = create_grab(self, model, vector_origin, build_callback(axis, axis2))
-					ent:SetWorldPosition(self.entity:NearestPoint(wpos - dir))
-					ent:SetWorldAngles(dir:Angle() + Angle(-90,0,0))
 					ent:SetLocalScale(Vector(1,1,1)*0.25)
+					ent:SetWorldPosition(self.entity:NearestPoint(wpos - dir) - dir)
+					local ang =
+					ent:SetAngles(ent:GetPosition():AngleEx(Vector(0,0,1)) + Angle(90,0,0))
 					ent:SetColor(gizmo_color)
 					ent:SetWorldPosition(ent:GetWorldPosition() + ent:GetUp() * ent:GetBoundingRadius()*2.15)
 				end
@@ -1897,14 +1911,14 @@ do -- components
 				return ent
 			end
 
-			add_grabbable(RED, "GetRight", "GetForward")
-			add_grabbable(GREEN, "GetForward", "GetRight")
-			add_grabbable(BLUE, "GetRight", "GetUp")
+			add_grabbable(RED, "GetRight", "GetForward", "GetRight")
+			add_grabbable(GREEN, "GetForward", "GetRight", "GetUp")
+			add_grabbable(BLUE, "GetRight", "GetUp", "GetForward")
 		end
 
 		function META:SetupRotation()
 			local disc = "models/hunter/tubes/tube4x4x025d.mdl"
-			local dist = dist * 0.4
+			local dist = dist*0.5/1.25
 			local visual_size = 0.28
 			local scale = 0.25
 
@@ -1941,9 +1955,6 @@ do -- components
 						if not plane_pos then return end
 
 						local local_drag_rotation = local_matrix(m, (plane_pos - m:GetTranslation())*invert)
-
-						--debugoverlay.Line(m:GetTranslation(), m:GetTranslation() + (local_drag_rotation:GetForward() * -1000), 0, RED, true)
-						--debugoverlay.Line(m:GetTranslation(), m:GetTranslation() + (local_start_rotation:GetForward() * -1000),0, RED, true)
 
 						local m = m * Matrix()
 
@@ -1990,7 +2001,7 @@ do -- components
 						visual:RemoveComponent("input")
 						visual:SetModel("models/hunter/tubes/tube4x4x025.mdl")
 						visual:SetPosition(self:GetCenter())
-						visual:SetLocalScale(Vector(1,1,thickness/5)*visual_size)
+						visual:SetLocalScale(Vector(1,1,thickness/5)*self.entity:GetBoundingRadius()/90)
 
 						visual:SetMaterial(white_mat)
 						visual:SetColor(color_white)
@@ -2018,39 +2029,57 @@ do -- components
 				end
 			end
 
-			local function add_grabbable(dir, axis, gizmo_angle, gizmo_color, fixup_callback)
-				local ent = create_grab(self, disc, dir*dist/2, build_callback(axis, fixup_callback, 1))
+			local function add_grabbable(axis, axis2, gizmo_color, fixup_callback)
+				local m = self.entity:GetWorldMatrix()
+				local dir = m[axis2](m) * dist
+				local wpos = self.entity:GetWorldPosition()
 
-				ent:SetAngles(gizmo_angle)
-				ent:SetLocalScale(Vector(1,1,thickness/5)*scale)
-				ent:SetColor(gizmo_color)
+				do
+					local ent = create_grab(self, disc, vector_origin, build_callback(axis, fixup_callback, 1))
+					ent:SetWorldPosition(self.entity:NearestPoint(wpos + dir) + dir)
 
-				local ent = create_grab(self, disc, dir*dist/2, build_callback(axis, fixup_callback, -1))
+					if axis == "GetRight" then
+						ent:SetAngles(Angle(45,180,90))
+					elseif axis == "GetUp" then
+						ent:SetAngles(Angle(0,90 -45,0))
+					elseif axis == "GetForward" then
+						ent:SetAngles(Angle(90 +45,90,90))
+					end
 
-				ent:SetAngles(gizmo_angle + Angle(0,180,0))
-				ent:SetLocalScale(Vector(1,1,thickness/5)*scale)
+					ent:SetLocalScale(Vector(1,1,1)*0.25)
 
-				if axis == "GetForward" then
-					ent:SetAngles(gizmo_angle + Angle(180,0,0))
-
+					ent:SetColor(gizmo_color)
+				--	ent:SetWorldPosition(ent:GetWorldPosition() + ent:GetForward() * ent:GetBoundingRadius()*2.15)
 				end
 
-				-- this inverts the translation as well
+				do
+					local ent = create_grab(self, disc, vector_origin, build_callback(axis, fixup_callback, -1))
+					ent:SetWorldPosition(self.entity:NearestPoint(wpos - dir) - dir)
 
-				ent:SetTRScale(Vector(-1,-1,-1))
-				ent:SetColor(gizmo_color)
+					if axis == "GetRight" then
+						ent:SetAngles(Angle(45,180,90))
+					elseif axis == "GetUp" then
+						ent:SetAngles(Angle(0,90 -45,0))
+					elseif axis == "GetForward" then
+						ent:SetAngles(Angle(90 +45,90,90))
+					end
+
+					ent:SetLocalScale(Vector(1,1,1)*-0.25)
+					ent:SetColor(gizmo_color)
+				--	ent:SetWorldPosition(ent:GetWorldPosition() + ent:GetForward() * ent:GetBoundingRadius()*2.15)
+				end
 			end
 
-			add_grabbable(Vector(1,0,0), "GetRight", Angle(45,180,90), RED, function(local_angles)
+			add_grabbable("GetRight", "GetForward", RED, function(local_angles)
 				local_angles.r = -local_angles.y
 			end)
 
-			add_grabbable(Vector(0,1,0), "GetUp", Angle(0,-90 - 45,0), GREEN, function(local_angles)
+			add_grabbable("GetUp", "GetRight", GREEN, function(local_angles)
 				local_angles.r = -local_angles.p
 				local_angles.y = local_angles.y - 90
 			end)
 
-			add_grabbable(Vector(0,0,1), "GetForward", Angle(90 +45,90,90), BLUE, function(local_angles)
+			add_grabbable("GetForward", "GetUp", BLUE, function(local_angles)
 				-- this one is realy weird
 				local p = local_angles.p
 
@@ -2170,7 +2199,7 @@ do -- components
 				self:SetupViewTranslation()
 				self:SetupTranslation()
 				self:SetupRotation()
-				self:SetupScale()
+				--self:SetupScale()
 			else
 				for k,v in pairs(self.grab_entities) do
 					v:Remove()
