@@ -28,24 +28,36 @@ end
 _G.pac999 = _G.pac999 or {}
 local pac999 = _G.pac999
 
-local function transform_point(matrix, vec)
-	local m = matrix * Matrix()
-	m:Translate(vec)
-	return m:GetTranslation()
-end
+do
+	local META = {}
+	META.__index = META
 
-local function Matrix44(pos, ang, scale)
-	local m = Matrix()
-	if pos then
-		m:SetTranslation(pos)
+	for key, val in pairs(FindMetaTable("VMatrix")) do
+		if key ~= "__index" and key ~= "__tostring" and key ~= "__gc" then
+			META[key] = function(self, ...)
+				local a,b,c = self.m[key](self.m, ...)
+				if a == nil then
+					return self
+				end
+				return a,b,c
+			end
+		end
 	end
-	if ang then
-		m:SetAngles(ang)
+
+	function pac999.Matrix44(pos, ang, scale)
+		local m = Matrix()
+		if pos then
+			m:SetTranslation(pos)
+		end
+		if ang then
+			m:SetAngles(ang)
+		end
+		if scale then
+			m:SetScale(scale)
+		end
+
+		return setmetatable({m = m}, META)
 	end
-	if scale then
-		m:SetScale(scale)
-	end
-	return m
 end
 
 do
@@ -123,6 +135,74 @@ do
 				end,
 			}
 		end
+	end
+
+	function utility.TriangleIntersect(rayOrigin, rayDirection, v1,v2,v3)
+		local EPSILON = 1 / 1048576
+
+		local rdx, rdy, rdz = rayDirection.x, rayDirection.y, rayDirection.z
+
+		-- find vectors for two edges sharing vert0
+		--local edge1 = self.y - self.x
+		--local edge2 = self.z - self.x
+		local e1x, e1y, e1z = (v2.x - v1.x), (v2.y - v1.y), (v2.z - v1.z)
+		local e2x, e2y, e2z = (v3.x - v1.x), (v3.y - v1.y), (v3.z - v1.z)
+
+		-- begin calculating determinant - also used to calculate U parameter
+		--local pvec = rayDirection:cross( edge2 )
+		local pvx = (rdy * e2z) - (rdz * e2y)
+		local pvy = (rdz * e2x) - (rdx * e2z)
+		local pvz = (rdx * e2y) - (rdy * e2x)
+
+		-- if determinant is near zero, ray lies in plane of triangle
+		--local det = edge1:dot( pvec )
+		local det = (e1x * pvx) + (e1y * pvy) + (e1z * pvz)
+
+		if (det > -EPSILON) and (det < EPSILON) then return end
+
+		local inv_det = 1 / det
+
+		-- calculate distance from vertex 0 to ray origin
+		--local tvec = rayOrigin - self.x
+		local tvx = rayOrigin.x - v1.x
+		local tvy = rayOrigin.y - v1.y
+		local tvz = rayOrigin.z - v1.z
+
+		-- calculate U parameter and test bounds
+		--local u = tvec:dot( pvec ) * inv_det
+		local u = ((tvx * pvx) + (tvy * pvy) + (tvz * pvz)) * inv_det
+		if (u < 0) or (u > 1) then return end
+
+		-- prepare to test V parameter
+		--local qvec = tvec:cross( edge1 )
+		local qvx = (tvy * e1z) - (tvz * e1y)
+		local qvy = (tvz * e1x) - (tvx * e1z)
+		local qvz = (tvx * e1y) - (tvy * e1x)
+
+		-- calculate V parameter and test bounds
+		--local v = rayDirection:dot( qvec ) * inv_det
+		local v = ((rdx * qvx) + (rdy * qvy) + (rdz * qvz)) * inv_det
+		if (v < 0) or (u + v > 1) then return end
+
+		-- calculate t, ray intersects triangle
+		--local hitDistance = edge2:dot( qvec ) * inv_det
+		local hitDistance = ((e2x * qvx) + (e2y * qvy) + (e2z * qvz)) * inv_det
+
+		-- only allow intersections in the forward ray direction
+		return (hitDistance >= 0) and hitDistance or nil
+	end
+
+	function utility.GetUnscaledMatrixAngles(matrix)
+		local m = matrix * Matrix()
+		m:SetTranslation(vector_origin)
+		m:SetScale(Vector(1,1,1))
+		return m:GetAngles()
+	end
+
+	function utility.TransformVector(matrix, vec)
+		local m = matrix * Matrix()
+		m:Translate(vec)
+		return m:GetTranslation()
 	end
 
 	pac999.utility = utility
@@ -1168,10 +1248,6 @@ do -- components
 
 		local META = pac999.entity.ComponentTemplate("bounding_box", {"transform", "node"})
 
-		function META.EVENTS:Update()
-
-		end
-
 		function META:GetCorrectedBoundingBox()
 			local min = self.Min
 			local max = self.Max
@@ -1228,6 +1304,17 @@ do -- components
 			self.angle_offset = angle_offset
 		end
 
+		function META:GetBoundingBox()
+			local m = self.entity.transform:GetMatrix() * Matrix()
+
+			local min, max = self.entity.bounding_box:GetWorldSpaceBoundingBox()
+
+			min = min - m:GetTranslation()
+			max = max - m:GetTranslation()
+
+			return min, max
+		end
+
 		-- TODO: rotation doesn't work properly
 		function META:GetWorldSpaceBoundingBox()
 			local min, max = self:GetCorrectedBoundingBox()
@@ -1277,6 +1364,8 @@ do -- components
 
 	do -- input
 		local camera = pac999.camera
+		local utility = pac999.utility
+		local models = pac999.models
 
 		local META = pac999.entity.ComponentTemplate("input", {"transform", "bounding_box"})
 
@@ -1315,147 +1404,39 @@ do -- components
 			return self.HitPosition
 		end
 
-		local EPSILON   = 1 / 1048576
-
-		function Triangle_getIntersection( rayOrigin, rayDirection, v1,v2,v3 )
-
-			local rdx, rdy, rdz = rayDirection.x, rayDirection.y, rayDirection.z
-
-			-- find vectors for two edges sharing vert0
-			--local edge1 = self.y - self.x
-			--local edge2 = self.z - self.x
-			local e1x, e1y, e1z = (v2.x - v1.x), (v2.y - v1.y), (v2.z - v1.z)
-			local e2x, e2y, e2z = (v3.x - v1.x), (v3.y - v1.y), (v3.z - v1.z)
-
-			-- begin calculating determinant - also used to calculate U parameter
-			--local pvec = rayDirection:cross( edge2 )
-			local pvx = (rdy * e2z) - (rdz * e2y)
-			local pvy = (rdz * e2x) - (rdx * e2z)
-			local pvz = (rdx * e2y) - (rdy * e2x)
-
-			-- if determinant is near zero, ray lies in plane of triangle
-			--local det = edge1:dot( pvec )
-			local det = (e1x * pvx) + (e1y * pvy) + (e1z * pvz)
-
-			if (det > -EPSILON) and (det < EPSILON) then return end
-
-			local inv_det = 1 / det
-
-			-- calculate distance from vertex 0 to ray origin
-			--local tvec = rayOrigin - self.x
-			local tvx = rayOrigin.x - v1.x
-			local tvy = rayOrigin.y - v1.y
-			local tvz = rayOrigin.z - v1.z
-
-			-- calculate U parameter and test bounds
-			--local u = tvec:dot( pvec ) * inv_det
-			local u = ((tvx * pvx) + (tvy * pvy) + (tvz * pvz)) * inv_det
-			if (u < 0) or (u > 1) then return end
-
-			-- prepare to test V parameter
-			--local qvec = tvec:cross( edge1 )
-			local qvx = (tvy * e1z) - (tvz * e1y)
-			local qvy = (tvz * e1x) - (tvx * e1z)
-			local qvz = (tvx * e1y) - (tvy * e1x)
-
-			-- calculate V parameter and test bounds
-			--local v = rayDirection:dot( qvec ) * inv_det
-			local v = ((rdx * qvx) + (rdy * qvy) + (rdz * qvz)) * inv_det
-			if (v < 0) or (u + v > 1) then return end
-
-			-- calculate t, ray intersects triangle
-			--local hitDistance = edge2:dot( qvec ) * inv_det
-			local hitDistance = ((e2x * qvx) + (e2y * qvy) + (e2z * qvz)) * inv_det
-
-			-- only allow intersections in the forward ray direction
-			return (hitDistance >= 0) and hitDistance or nil
-
-		 end
-
-		local function triangle_intersect(a,b,c,p)
-			local u = b - a
-			local v = c - a
-			local w = p - a
-
-			debugoverlay.Cross(a, 1, 0,RED, true)
-			debugoverlay.Cross(b, 1, 0,RED, true)
-			debugoverlay.Cross(c, 1, 0,RED, true)
-
-			local vw = v:Cross(w)
-			local vu = v:Cross(u)
-
-			if vw:Dot(vu) < 0 then
-
-				return false
-			end
-
-			local uw = u:Cross(w)
-			local uv = u:Cross(v)
-
-			if uw:Dot(uv) < 0 then
-				return false
-			end
-
-			local d = uv:Length()
-			local r = vw:Length() / d
-			local t = uw:Length() / d
-
-			return r + t <= 1
-		end
-
 		function META:CameraRayIntersect()
-			if not rawget(self.entity, "bounding_box") then return end
+			local min, max = self.entity:GetBoundingBox()
 
-			local m = self.entity.transform:GetMatrix() * Matrix()
+			local m = self.entity:GetMatrix()
+			local hit_pos, normal, fraction = camera.IntersectRayWithOBB(m:GetTranslation(), m:GetAngles(), min, max)
+			local m = self.entity:GetWorldMatrix()
 
-			local min, max = self.entity.bounding_box:GetWorldSpaceBoundingBox()
+			if hit_pos then
+				if not self.entity.model then
+					return hit_pos, normal, fraction
+				end
 
-			min = min - m:GetTranslation()
-			max = max - m:GetTranslation()
+				local mesh = models.GetMeshInfo(self.entity.model.Model:GetModel())
+				if not mesh then
+					return hit_pos, normal, fraction
+				end
 
-			local old = m:GetScale()
-			local oldtr = m:GetTranslation()
-			m:SetTranslation(vector_origin)
-			m:SetScale(Vector(1,1,1))
-			m:SetTranslation(oldtr)
-			local a = m:GetAngles()
-			m:SetScale(old)
+				for _, data in ipairs(mesh.data) do
+					for i = 1, #data.triangles, 3 do
+						local v1 = utility.TransformVector(m, data.triangles[i+0].pos)
+						local v2 = utility.TransformVector(m, data.triangles[i+1].pos)
+						local v3 = utility.TransformVector(m, data.triangles[i+2].pos)
 
+						local dist = utility.TriangleIntersect(camera.GetViewMatrix():GetTranslation(), camera.GetViewRay(),  v3, v2, v1)
 
-			local a,b,c = camera.IntersectRayWithOBB(
-				m:GetTranslation(), a,
-				min, max
-			)
-
-			local m =  self.entity.transform:GetWorldMatrix()
-
-			if a then
-				if self.entity.model then
-					local mesh = pac999.models.GetMeshInfo(self.entity.model.Model:GetModel())
-					if mesh then
-						for _, data in ipairs(mesh.data) do
-							for i = 1, #data.triangles, 3 do
-								local v1 = data.triangles[i+0].pos
-								local v2 = data.triangles[i+1].pos
-								local v3 = data.triangles[i+2].pos
-
-								v1 = transform_point(m, v1)
-								v2 = transform_point(m, v2)
-								v3 = transform_point(m, v3)
-
-								local dist = Triangle_getIntersection(camera.GetViewMatrix():GetTranslation(), camera.GetViewRay(),  v3,v2,v1)
-								if dist then
-									--debugoverlay.Text(v1, tostring(dist), 0)
-									--debugoverlay.Text(v2, tostring(dist), 0)
-									--debugoverlay.Text(v3, tostring(dist), 0)
-									debugoverlay.Triangle(v1, v2, v3, 0, Color(0,255,0), true)
-									debugoverlay.Triangle(v3, v2, v1, 0, Color(0,255,0), true)
-									return a,b,c
-								end
-							end
+						if dist then
+							--debugoverlay.Text(v1, tostring(dist), 0)
+							--debugoverlay.Text(v2, tostring(dist), 0)
+							--debugoverlay.Text(v3, tostring(dist), 0)
+							debugoverlay.Triangle(v1, v2, v3, 0, Color(0,255,0), true)
+							debugoverlay.Triangle(v3, v2, v1, 0, Color(0,255,0), true)
+							return hit_pos, normal, fraction
 						end
-					else
-						return a,b,c
 					end
 				end
 			end
