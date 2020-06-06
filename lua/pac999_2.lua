@@ -1,7 +1,10 @@
 --[[
 	TODO:
-		fix bounding box not scaling when resizing
-		use faces of bounding box to scale
+		maybe not use matrices for everything?
+			difficult to cram everything into matrices sometimes, maybe it's
+			best to do it at cache time
+
+		fix issues with world to local
 
 		lock mouse to axis?
 		center gizmo when scaling? maybe on release?
@@ -24,6 +27,26 @@ end
 
 _G.pac999 = _G.pac999 or {}
 local pac999 = _G.pac999
+
+local function transform_point(matrix, vec)
+	local m = matrix * Matrix()
+	m:Translate(vec)
+	return m:GetTranslation()
+end
+
+local function Matrix44(pos, ang, scale)
+	local m = Matrix()
+	if pos then
+		m:SetTranslation(pos)
+	end
+	if ang then
+		m:SetAngles(ang)
+	end
+	if scale then
+		m:SetScale(scale)
+	end
+	return m
+end
 
 do
 	local table_remove = table.remove
@@ -111,24 +134,29 @@ do
 	function camera.IntersectRayWithOBB(pos, ang, min, max)
 		local view = camera.GetViewMatrix()
 
+		-- TODO: some phx models have weird bounding boxes where min.x is higher than max.x but not min.y
+		local l = Vector(math.min(min.x, max.x), math.min(min.y, max.y), math.min(min.z, max.z))
+		local h = Vector(math.max(min.x, max.x), math.max(min.y, max.y), math.max(min.z, max.z))
 
-		debugoverlay.BoxAngles(
-			pos,
-			min,
-			max,
-			ang,
-			0,
-			Color(255,0,0, 50), true
-		)
-
-		return util.IntersectRayWithOBB(
+		local a,b,c = util.IntersectRayWithOBB(
 			view:GetTranslation(),
 			view:GetForward() * 32000,
 			pos,
 			ang,
-			min,
-			max
+			l,
+			h
 		)
+
+		debugoverlay.BoxAngles(
+			pos,
+			l,
+			h,
+			ang,
+			0,
+			Color(255,0,0, a and 50 or 0), true
+		)
+
+		return a,b,c
 	end
 
 	function camera.GetViewRay()
@@ -190,6 +218,7 @@ do
 			end
 
 			obj:SetPointerOver(true)
+			obj.entity:FireEvent("PointerHover")
 
 			return
 		end
@@ -209,8 +238,7 @@ do
 				obj:SetHitNormal(normal)
 				obj:SetPointerOver(true)
 				obj:SetPointerDown(input.IsGrabbing())
-
-
+				obj.entity:FireEvent("PointerHover")
 
 				if input.IsGrabbing() then
 					input.grabbed = obj
@@ -655,6 +683,14 @@ do
 		end
 
 		do
+			local a = entity.Create({"test"})
+			a:AddComponent("test2")
+			a:Remove()
+			assert(#entity.GetAllComponents("test2") == 0)
+			assert(#entity.GetAll() == 0)
+		end
+
+		do
 			events = {}
 
 			local obj = entity.Create({"test"})
@@ -807,7 +843,7 @@ do -- components
 		function META:Start()
 			self.Transform = Matrix()
 			self.ScaleTransform = Matrix()
-			self.LocalScaleTransform = Matrix()
+			self.LocalScale = Vector(1,1,1)
 			self.Matrix = Matrix()
 
 
@@ -823,6 +859,32 @@ do -- components
 
 		META.CageSizeMin = Vector(0,0,0)
 		META.CageSizeMax = Vector(0,0,0)
+
+		function META:LocalToWorldMatrix(pos, ang)
+			local lmat = Matrix()
+			lmat:SetTranslation(pos)
+			lmat:SetAngles(ang)
+
+			return self:GetWorldMatrix() * lmat
+		end
+
+		function META:WorldToLocalMatrix(pos, ang)
+			local lmat = Matrix()
+			lmat:SetTranslation(pos)
+			lmat:SetAngles(ang)
+
+			return self:GetWorldMatrix():GetInverse() * lmat
+		end
+
+		function META:LocalToWorld(pos, ang)
+			local wmat = self:LocalToWorldMatrix(pos, ang)
+			return wmat:GetTranslation(), wmat:GetAngles()
+		end
+
+		function META:WorldToLocal(pos, ang)
+			local wmat = self:WorldToLocalMatrix(pos, ang)
+			return wmat:GetTranslation(), wmat:GetAngles()
+		end
 
 		function META:GetWorldMatrix()
 			local m = self.entity.transform:GetMatrix() * self.entity.transform:GetScaleMatrix()
@@ -848,9 +910,17 @@ do -- components
 
 			s = s * 1
 
+			if self.CageMax.x ~= 0 then
 			s.x = 1 + s.x / self.CageMax.x/2
+			end
+
+			if self.CageMax.y ~= 0 then
 			s.y = 1 + s.y / self.CageMax.y/2
+			end
+
+			if self.CageMax.z ~= 0 then
 			s.z = 1 + s.z / self.CageMax.z/2
+			end
 
 			self:SetCageScaleMax(s)
 		end
@@ -860,9 +930,17 @@ do -- components
 
 			s = s * 1
 
+			if self.CageMin.x ~= 0 then
 			s.x = 1 - s.x / self.CageMin.x/2
+			end
+
+			if self.CageMin.y ~= 0 then
 			s.y = 1 - s.y / self.CageMin.y/2
+			end
+
+			if self.CageMin.z ~= 0 then
 			s.z = 1 - s.z / self.CageMin.z/2
+			end
 
 			self:SetCageScaleMin(s)
 		end
@@ -929,7 +1007,7 @@ do -- components
 
 		function META:GetMatrix()
 			if self.InvalidMatrix then
-				self.Matrix = self:BuildMatrix()
+				self.Matrix = self:BuildTRMatrix()
 				self.InvalidMatrix = false
 			end
 
@@ -950,7 +1028,6 @@ do -- components
 				)
 			end
 
-
 			return self.Matrix
 		end
 
@@ -964,7 +1041,7 @@ do -- components
 			self.IgnoreParentScale = b
 		end
 
-		function META:BuildMatrix()
+		function META:BuildTRMatrix()
 			local tr = self.Transform * Matrix()
 
 			if self.TRScale then
@@ -983,19 +1060,17 @@ do -- components
 					local pm = parent:GetMatrix()*Matrix()
 					pm:SetScale(Vector(1,1,1))
 					tr = pm * tr
-					self._Scale = self:GetScale()
+					tr:Scale(self.Scale)
 				else
 					tr = parent:GetMatrix() * tr
-					self._Scale = self:GetScale() * parent:GetScale()
+					tr:Scale(self.Scale * parent.Scale)
 				end
 			end
 
 
 			---tr:Translate(LerpVector(0.5, self:OBBMins(), self:OBBMaxs()))
 
-			tr:Scale(self._Scale)
-			tr:Scale(self.LocalScaleTransform:GetScale())
-
+			tr:Scale(self.LocalScale)
 
 			return tr
 		end
@@ -1026,9 +1101,12 @@ do -- components
 		end
 
 		function META:GetScale()
-			local s = (self._Scale or self.Scale)
+			return self.Scale
+		end
 
-			return s
+		function META:SetTRMatrix(m)
+			self.Transform = m * Matrix()
+			self:InvalidateMatrix()
 		end
 
 		function META:SetWorldMatrix(m)
@@ -1040,6 +1118,10 @@ do -- components
 		function META:SetPosition(v)
 			self.Transform:SetTranslation(v)
 			self:InvalidateMatrix()
+		end
+
+		function META:GetPosition()
+			return self.Transform:GetTranslation()
 		end
 
 		function META:GetWorldPosition()
@@ -1066,7 +1148,7 @@ do -- components
 		end
 
 		function META:SetLocalScale(v)
-			self.LocalScaleTransform:Scale(v)
+			self.LocalScale = v
 			self:InvalidateMatrix()
 		end
 
@@ -1087,22 +1169,58 @@ do -- components
 		local META = pac999.entity.ComponentTemplate("bounding_box", {"transform", "node"})
 
 		function META.EVENTS:Update()
-			do return end
-			local min, max = self:GetWorldSpaceBoundingBoxChildren()
-			if not min then return end
-
-			debugoverlay.Box(
-				Vector(0,0,0),
-				min,
-				max,
-				0,
-				Color(255,0,0, 0)
-			)
 
 		end
 
-		META.Min = vector_origin
-		META.Max = vector_origin
+		function META:GetCorrectedBoundingBox()
+			local min = self.Min
+			local max = self.Max
+			-- TODO: some phx models have weird bounding boxes where min.x is higher than max.x but not min.y
+			local l = Vector(math.min(min.x, max.x), math.min(min.y, max.y), math.min(min.z, max.z))
+			local h = Vector(math.max(min.x, max.x), math.max(min.y, max.y), math.max(min.z, max.z))
+
+			return l, h
+		end
+
+		function META:NearestPoint(point)
+			local m = self.entity.transform:GetMatrix()
+			local pos = m:GetTranslation()
+			local ang = m:GetAngles()
+
+			local min, max = self:GetCorrectedBoundingBox()
+			local m = self.entity.transform:GetMatrix()*Matrix() * self.entity.transform:GetScaleMatrix()
+
+			local center = LerpVector(0.5, min, max)
+			min = min - center
+			max = max - center
+			min = min * m:GetScale()
+			max = max * m:GetScale()
+
+			local dir = pos - point
+
+			local hit_pos, hit_normal, c = util.IntersectRayWithOBB(
+				point,
+				dir,
+				pos,
+				ang,
+				min,
+				max
+			)
+
+			debugoverlay.Cross(point, 10,0)
+
+			if hit_pos then
+				debugoverlay.Line(point, hit_pos, 1, Color(0,0,255,255))
+				debugoverlay.Line(hit_pos, point + dir, 1, Color(0,255,0,10),true)
+			else
+				debugoverlay.Line(point, point + dir, 1, Color(255,0,0,255),true)
+			end
+
+			return hit_pos
+		end
+
+		META.Min = Vector(-1,-1,-1)
+		META.Max = Vector(1,1,1)
 
 		function META:SetBoundingBox(min, max, angle_offset)
 			self.Min = min
@@ -1110,75 +1228,48 @@ do -- components
 			self.angle_offset = angle_offset
 		end
 
-		function META:GetBoundingBox()
-			local center = self:GetCenter()
-			return self.Min - center, self.Max - center
-		end
-
 		-- TODO: rotation doesn't work properly
 		function META:GetWorldSpaceBoundingBox()
-			local mins, maxs = self:GetBoundingBox()
+			local min, max = self:GetCorrectedBoundingBox()
+			local center = LerpVector(0.5, min, max)
+			min = min - center
+			max = max - center
 
-			local m = self.entity.transform:GetMatrix()
-			--m:Translate(LerpVector(0.5, mins, maxs))
+			local m = self.entity.transform:GetMatrix() * Matrix()
+			--m:SetScale(Vector(1,1,1))
 
-			if self.angle_offset and self.angle_offset ~= Angle(0,0,0) then
-				mins = mins * 1
-				maxs = maxs * 1
-				local a = self.angle_offset*1
-				a:RotateAroundAxis(Vector(0,1,0), -90)
-				mins:Rotate(a)
-				maxs:Rotate(a)
+			local scale = self.entity.transform:GetScaleMatrix() * Matrix()
+
+			min = min * scale:GetScale() * m:GetScale()
+			max = max * scale:GetScale() * m:GetScale()
+			do
+				local tr = Matrix()
+				tr:Translate(scale:GetTranslation()*m:GetScale())
+				tr:Translate(min)
+				tr = tr * m
+				min = tr:GetTranslation()
 			end
 
-			local s = m:GetScale()
+			do
+				local tr = Matrix()
+				tr:Translate(scale:GetTranslation()*m:GetScale())
+				tr:Translate(max)
+				tr = tr * m
+				max = tr:GetTranslation()
+			end
 
-			local mmins = Matrix()
-			mmins:Translate(mins * s)
+			--print(min, max)
 
-			local mmaxs = Matrix()
-			mmaxs:Translate(maxs * s)
-
-			mmins = mmins * m
-			mmaxs = mmaxs * m
-
-			return mmins:GetTranslation(), mmaxs:GetTranslation()
+			return min, max
 		end
 
 		function META:GetWorldSpaceCenter()
 			return LerpVector(0.5, self:GetWorldSpaceBoundingBox())
 		end
 
-		function META:GetCenter()
-			return LerpVector(0.5, self.Min, self.Max)
-		end
-
 		function META:GetBoundingRadius()
 			local min, max = self:GetWorldSpaceBoundingBox()
 			return min:Distance(max)/2
-		end
-
-		function META:GetWorldSpaceBoundingBoxChildren()
-			local all = self.entity.node:GetAllChildrenAndSelf()
-			local root = all[1]
-
-			local min = root.entity.transform:GetMatrix():GetTranslation()
-			local max = min*1
-
-			for _, child in ipairs(all) do
-				local min2, max2 = child.entity.bounding_box:GetWorldSpaceBoundingBox()
-
-				min.x = math.min(min.x, min2.x)
-				min.y = math.min(min.y, min2.y)
-				min.z = math.min(min.z, min2.z)
-
-
-				max.x = math.max(max.x, max2.x)
-				max.y = math.max(max.y, max2.y)
-				max.z = math.max(max.z, max2.z)
-			end
-
-			return min, max
 		end
 
 		META:Register()
@@ -1312,17 +1403,10 @@ do -- components
 			return r + t <= 1
 		end
 
-		local function transform_point(matrix, vec)
-			local m = matrix * Matrix()
-			m:Translate(vec)
-			return m:GetTranslation()
-		end
-
 		function META:CameraRayIntersect()
 			if not rawget(self.entity, "bounding_box") then return end
 
-			local m = self.entity.transform:GetMatrix()
-
+			local m = self.entity.transform:GetMatrix() * Matrix()
 
 			local min, max = self.entity.bounding_box:GetWorldSpaceBoundingBox()
 
@@ -1406,8 +1490,6 @@ do -- components
 			local m = world * Matrix()
 			m:Translate(-self.entity.transform:GetCageCenter())
 			mdl:SetRenderOrigin(m:GetTranslation())
-
-			debugoverlay.Cross(m:GetTranslation(), 2, 0, RED, true)
 
 			m:SetTranslation(vector_origin)
 			mdl:EnableMatrix("RenderMultiply", m * self.entity.transform:GetScaleMatrix())
@@ -1538,7 +1620,7 @@ do -- components
 			ent:SetIgnoreZ(true)
 			ent:RemoveComponent("gizmo")
 			ent:SetModel(mdl)
-			ent:SetPosition(self:GetCenter() + pos)
+			ent:SetPosition( pos)
 			ent:SetMaterial(white_mat)
 			ent:SetAlpha(1)
 			ent:SetIgnoreParentScale(true)
@@ -1599,6 +1681,8 @@ do -- components
 			center = center or self.grab_matrix:GetTranslation()
 			self.old_scale = self.grab_matrix:GetScale()
 			self.grab_matrix:SetScale(Vector(1,1,1))
+			self.grab_transform = self.entity.transform.Transform * Matrix()
+			self.grab_translation = self.grab_transform:GetTranslation()
 
 
 			self.center_pos = util.IntersectRayWithPlane(
@@ -1626,9 +1710,17 @@ do -- components
 			return plane_pos
 		end
 
-		function META:SetWorldMatrix(m)
-			m:SetScale(self.old_scale)
-			self.entity.transform:SetWorldMatrix(m)
+		function META:SetWorldMatrix(m, b)
+			if self.old_scale then
+				--m:SetScale(self.old_scale)
+				--self.grab_matrix:SetScale(self.old_scale)
+			end
+
+			self.entity.transform:SetTRMatrix(m * self.grab_matrix:GetInverse() * self.grab_transform)
+
+			if self.old_scale then
+				--self.grab_matrix:SetScale(Vector(1,1,1))
+			end
 		end
 
 		function META:SetupTranslation()
@@ -1764,7 +1856,7 @@ do -- components
 						--debugoverlay.Line(m:GetTranslation(), m:GetTranslation() + (local_start_rotation:GetForward() * -1000),0, RED, true)
 
 						local m = m * Matrix()
-						m:Translate(self:GetCenter())
+
 						local ang = (local_start_rotation:GetInverse() * local_drag_rotation):GetAngles()
 
 						if input.IsKeyDown(KEY_LSHIFT) then
@@ -1786,9 +1878,11 @@ do -- components
 						local ang = (m * rot):GetAngles()
 
 						m:SetAngles(ang)
-						m:Translate(-self:GetCenter())
 
 						self:SetWorldMatrix(m)
+						-- TODO
+						self.entity.transform:SetPosition(self.grab_transform:GetTranslation())
+
 					end
 				end,
 				function(ent, grabbed)
@@ -1924,6 +2018,7 @@ do -- components
 						end
 						local dist = (plane_pos - center_pos):Dot( m[axis2](m))
 
+
 						if reverse then
 							self.entity.transform:SetCageSizeMax(cage_min_start - (dir * dist))
 						else
@@ -1934,21 +2029,43 @@ do -- components
 			end
 
 			local function add_grabbable(dir, gizmo_angle, gizmo_color, axis, axis2)
+
+				local function update(ent, dir)
+					local min, max = self.entity.bounding_box:GetWorldSpaceBoundingBox()
+
+					--ent:SetPosition(max)
+
+					local m = self.entity.transform:GetMatrix()
+					local pos = m:GetTranslation()
+
+					local box_pos = self.entity:NearestPoint(pos + m:GetUp() * 1000)
+
+					--local pos, ang = self.entity:WorldToLocal(box_pos, Angle())
+
+					local pos, ang = self.entity:WorldToLocal(EyePos(), EyeAngles())
+
+					-- TODO: the position seems okay, but the scale boxes are not being positioned properly
+					if not self.LOL or not self.LOL[ent] then
+						ent:SetPosition(pos)
+						self.LOL = self.LOL or {}
+						self.LOL[ent] = true
+					end
+
+
+					--ent:SetPosition(pos)
+				end
+
 				local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2))
-				ent:SetAngles(gizmo_angle)
 				ent:SetLocalScale(Vector(1,1,1)*scale)
 				ent:SetColor(gizmo_color)
+				ent:AddEvent("Update", function(ent) update(ent, dir) end)
 
 				local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2, true))
-				ent:SetAngles(gizmo_angle)
 				ent:SetLocalScale(Vector(1,1,1)*scale)
 				ent:SetColor(gizmo_color)
 
-				if axis2 == "GetUp" then
-					ent:SetTRScale(Vector(1,-1,-1))
-				else
-					ent:SetTRScale(Vector(-1,-1,1))
-				end
+				ent:AddEvent("Update", function(ent) update(ent, dir*-1) end)
+
 				return ent
 			end
 
@@ -1958,6 +2075,8 @@ do -- components
 		end
 
 		function META:EnableGizmo(b)
+
+			--self.entity.transform:InvalidateMatrix()
 
 			if b then
 				self:SetupViewTranslation()
@@ -1973,10 +2092,19 @@ do -- components
 			self.gizmoenabled = b
 		end
 
+		function META.EVENTS:PointerHover()
+			local local_normal = self.entity.input:GetHitNormal()
+
+			if local_normal == Vector(0,0,1) then
+
+			end
+		end
+
 		function META.EVENTS:Pointer(hovered, grabbed)
 			if grabbed then
 				self:EnableGizmo(not self.gizmoenabled)
 			end
+
 		end
 
 		META:Register()
@@ -2016,9 +2144,27 @@ local me = LocalPlayer()
 if me then
 	local world = pac999.scene.AddNode()
 	world:SetName("world")
-	world:SetPosition(Vector(1015, -736, 512))
+	world:SetPosition(Vector(-380, -2184, -895))
 
-	do
+	if true then
+		local ent = pac999.scene.AddNode(world)
+		ent:SetModel("models/hunter/blocks/cube025x025x025.mdl")
+		ent:SetName("test")
+		ent:SetPosition(Vector(100, 1, 1))
+		--ent:EnableGizmo(true)
+		ent:SetCageSizeMin(Vector(100,0,0))
+		ent:SetCageSizeMax(Vector(100,0,0))
+		ent:SetLocalScale(Vector(1,4,4))
+		ent:SetAngles(Angle(45,45,45))
+
+		local pos, ang = ent:WorldToLocal(EyePos(), EyeAngles())
+		print(pos, ang)
+		--local ent = pac999.scene.AddNode(ent)
+		--ent:SetPosition(pos)
+		--ent:SetAngles(ang)
+	end
+
+	if false then
 		local root = world
 		local i = 1
 		local n = function(x,y,z)
@@ -2027,6 +2173,7 @@ if me then
 			i = i + 1
 			node:SetPosition(Vector(x,y,z))
 			node:SetModel("models/props_c17/lampShade001a.mdl")
+
 			return node
 		end
 
@@ -2050,11 +2197,25 @@ if me then
 			m:SetAlpha(1)
 			m:SetCageSizeMax(Vector(0,0,0))
 
+			if i == 4 then
+				m:EnableGizmo(true)
+			end
+
 			local m = n(80 + (i*35.5), 80+38*3, 10)
 			m:SetCageSizeMax(Vector(0,0,0))
 			m:SetAlpha(1)
 			m:SetAngles(Angle(45,0,0))
+			if i == 4 then
+				m:SetAngles(Angle(45,45,0))
+				m:EnableGizmo(true)
+			end
 		end
+
+		local m = n(80, 80+38*4 + 250, 10)
+		m.transform:SetCageSizeMax(Vector(1,1,1))
+		m.transform:SetCageSizeMin(Vector(35.5*4,1,1))
+		m.transform:SetAngles(Angle(0,45,0))
+		m.gizmo:EnableGizmo(true)
 
 		for i = 1, 1 do
 --			root = n(0, 0, 60)
@@ -2064,21 +2225,30 @@ if me then
 	world:SetTRScale(Vector(1,1,1))
 --	world:SetScale(Vector(1,1,1)/3)
 
-	timer.Simple(0, function()
-		for i,v in ipairs(world:GetAllChildrenAndSelf()) do
-			--print(i, v.entity.transform, v.entity.transform.Scale, v.entity.transform._Scale)
-		end
-	end)
-
-	--print("!")
-
-	for name, objects in pairs(pac999.entity.GetAll()) do
---		print(name, #objects)
+	for k,v in pairs(ents.GetAll()) do
+		v.LOL = nil
 	end
 
 	hook.Add("PreDrawOpaqueRenderables", "pac_999", function()
+
+
 		for _, obj in ipairs(pac999.entity.GetAll()) do
 			obj:FireEvent("Update")
 		end
+		do return end
+		local tr = LocalPlayer():GetEyeTrace()
+
+		if tr.Entity:IsValid() and tr.Entity:GetModel() and not tr.Entity:IsPlayer() then
+			if not tr.Entity.LOL then
+				local node = pac999.scene.AddNode(root)
+				node:SetModel(tr.Entity:GetModel())
+
+				local m = tr.Entity:GetWorldTransformMatrix()
+				m:Translate(node.transform:GetCageCenter())
+				node:SetWorldMatrix(m)
+				tr.Entity.LOL = node
+			end
+		end
+
 	end)
 end
