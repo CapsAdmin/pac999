@@ -13,7 +13,7 @@
 ]]
 
 local TEST = true
-local DEBUG = false
+local DEBUG = true
 
 if pac999_models then
 	hook.Remove("RenderScene", "pac_999")
@@ -1014,7 +1014,7 @@ do -- components
 
 		function META:GetWorldMatrix()
 			local m = self.entity.transform:GetMatrix() * self.entity.transform:GetScaleMatrix()
-			m:Translate(-self.entity.transform:GetCageCenter())
+			--m:Translate(-self.entity.transform:GetCageCenter())
 
 			return m
 		end
@@ -1040,19 +1040,20 @@ do -- components
 
 			function META:SetCageSizeMax(s)
 				self.CageSizeMax = s
-
 				s = s * 1
 
-				if self.CageMax.x ~= 0 then
-				s.x = 1 + s.x / self.CageMax.x/2
+				local max = self:GetCageMin()
+
+				if max.x ~= 0 then
+					s.x = 1 + s.x / max.x/2
 				end
 
-				if self.CageMax.y ~= 0 then
-				s.y = 1 + s.y / self.CageMax.y/2
+				if max.y ~= 0 then
+					s.y = 1 + s.y / max.y/2
 				end
 
-				if self.CageMax.z ~= 0 then
-				s.z = 1 + s.z / self.CageMax.z/2
+				if max.z ~= 0 then
+					s.z = 1 + s.z / max.z/2
 				end
 
 				self:SetCageScaleMax(s)
@@ -1063,16 +1064,18 @@ do -- components
 
 				s = s * 1
 
-				if self.CageMin.x ~= 0 then
-				s.x = 1 - s.x / self.CageMin.x/2
+				local min = self:GetCageMin()
+
+				if min.x ~= 0 then
+					s.x = 1 - s.x / min.x/2
 				end
 
-				if self.CageMin.y ~= 0 then
-				s.y = 1 - s.y / self.CageMin.y/2
+				if min.y ~= 0 then
+					s.y = 1 - s.y / min.y/2
 				end
 
-				if self.CageMin.z ~= 0 then
-				s.z = 1 - s.z / self.CageMin.z/2
+				if min.z ~= 0 then
+					s.z = 1 - s.z / min.z/2
 				end
 
 				self:SetCageScaleMin(s)
@@ -1098,6 +1101,19 @@ do -- components
 				self:InvalidateScaleMatrix()
 			end
 
+			function META:GetCageMin()
+				if self.entity.bounding_box then
+					return self.entity.bounding_box:GetCorrectedMin()
+				end
+				return self.CageMin
+			end
+
+			function META:GetCageMax()
+				if self.entity.bounding_box then
+					return self.entity.bounding_box:GetCorrectedMax()
+				end
+				return self.CageMax
+			end
 
 			function META:InvalidateScaleMatrix()
 				local tr = Matrix()
@@ -1107,18 +1123,19 @@ do -- components
 					local min = self.CageScaleMin
 					local max = self.CageScaleMax
 
-					tr:Translate(self.CageMax)
+
+					tr:Translate(self:GetCageMax())
 					tr:Scale(max)
-					tr:Translate(-self.CageMax)
+					tr:Translate(-self:GetCageMax())
 
 
-					tr:Translate(self.CageMin)
+					tr:Translate(self:GetCageMin())
 					tr:Scale(Vector(
 						((max.x + min.x-1)/max.x),
 						((max.y + min.y-1)/max.y),
 						((max.z + min.z-1)/max.z)
 					))
-					tr:Translate(-self.CageMin)
+					tr:Translate(-self:GetCageMin())
 				end
 
 				self.ScaleMatrix = tr
@@ -1131,12 +1148,15 @@ do -- components
 			end
 
 			function META:GetCageCenter()
-				return LerpVector(0.5, self.CageMin, self.CageMax)
+				if self.entity.bounding_box then
+					return self.entity.bounding_box:GetCenter()
+				end
+				return LerpVector(0.5, self:GetCageMin(), self:GetCageMax())
 			end
 
 			function META:GetCageMinMax()
 				local center = self:GetCageCenter()
-				return self.CageMin - center, self.CageMax - center
+				return self:GetCageMin() - center, self:GetCageMax() - center
 			end
 		end
 
@@ -1369,6 +1389,14 @@ do -- components
 				self.CorrectedMax = Vector(math.max(min.x, max.x), math.max(min.y, max.y), math.max(min.z, max.z))
 
 				self.Center = LerpVector(0.5, self.CorrectedMin, self.CorrectedMax)
+
+				local x = math.abs(self.CorrectedMin.x) + math.abs(self.CorrectedMax.x)
+				local y = math.abs(self.CorrectedMin.y) + math.abs(self.CorrectedMax.y)
+				local z = math.abs(self.CorrectedMin.z) + math.abs(self.CorrectedMax.z)
+
+				self.CorrectedMin = -Vector(x,y,z)/2
+				self.CorrectedMax = Vector(x,y,z)/2
+
 				self.BoundingRadius = self.CorrectedMin:Distance(self.CorrectedMax)/2
 			end
 
@@ -1444,7 +1472,7 @@ do -- components
 				end
 			end
 
-			return hit_pos
+			return hit_pos or point
 		end
 
 		function META:GetMin()
@@ -1461,7 +1489,7 @@ do -- components
 			local scale = self.entity.transform:GetScaleMatrix()
 
 			local tr = Matrix()
-			tr:SetTranslation(((min - self:GetCenter()) * scale:GetScale() + scale:GetTranslation()) * m:GetScale())
+			tr:SetTranslation(((min + self:GetCenter()) * scale:GetScale() + scale:GetTranslation()) * m:GetScale())
 			tr = tr * m
 
 			return tr:GetTranslation()
@@ -1474,7 +1502,7 @@ do -- components
 			local scale = self.entity.transform:GetScaleMatrix()
 
 			local tr = Matrix()
-			tr:SetTranslation(((max - self:GetCenter()) * scale:GetScale() + scale:GetTranslation()) * m:GetScale())
+			tr:SetTranslation(((max + self:GetCenter()) * scale:GetScale() + scale:GetTranslation()) * m:GetScale())
 			tr = tr * m
 
 			--print(utility.TransformVector(m, max + scale:GetTranslation() * m:GetScale()), tr:GetTranslation())
@@ -1626,7 +1654,7 @@ do -- components
 			local world = self.entity.transform:GetMatrix()
 
 			local m = world * Matrix()
-			m:Translate(-self.entity.transform:GetCageCenter())
+			--m:Translate(-self.entity.transform:GetCageCenter())
 			mdl:SetRenderOrigin(m:GetTranslation())
 
 			m:SetTranslation(vector_origin)
@@ -1683,11 +1711,6 @@ do -- components
 				self.entity.bounding_box:SetMin(data.min)
 				self.entity.bounding_box:SetMax(data.max)
 				self.entity.bounding_box:SetAngleOffset(data.angle_offset)
-			end
-
-			if self.entity.transform then
-				self.entity.transform:SetCageMin(data.min)
-				self.entity.transform:SetCageMax(data.max)
 			end
 
 			self.model_set = true
@@ -1772,10 +1795,6 @@ do -- components
 			self.grab_entities = {}
 		end
 
-		function META:GetCenter()
-			return self.entity.bounding_box:GetWorldCenter() - self.entity:GetWorldPosition()
-		end
-
 		local dist = 70
 		local thickness = 0.5
 
@@ -1846,7 +1865,7 @@ do -- components
 		end
 
 		function META:SetupTranslation()
-			local dist = dist * 0.7
+			local dist = 8
 			local thickness = 1.5
 			local model = "models/hunter/misc/cone1x1.mdl"
 
@@ -1884,7 +1903,6 @@ do -- components
 						visual:RemoveComponent("gizmo")
 						visual:RemoveComponent("input")
 						visual:SetModel("models/hunter/blocks/cube025x025x025.mdl")
-						visual:SetPosition(self:GetCenter())
 						visual:SetMaterial(white_mat)
 						visual:SetColor(color_white)
 						visual:SetAlpha(1)
@@ -2097,20 +2115,29 @@ do -- components
 
 						local m = m * Matrix()
 						local dir
-						if 	axis2 == "GetForward" then
-							dir = Vector(1,0,0)
-						elseif axis2 == "GetRight" then
-							dir = Vector(0,-1,0)
-						elseif axis2 == "GetUp" then
-							dir = Vector(0,0,1)
-						end
-						local dist = (plane_pos - center_pos):Dot( m[axis2](m))
-
 						local reverse = reverse
-						if axis2 == "GetRight" then
-							reverse = not reverse
+
+						if 	axis2 == "GetForward" then
+							if reverse then
+								dir = Vector(-1,0,0)
+							else
+								dir = Vector(1,0,0)
+							end
+						elseif axis2 == "GetRight" then
+							if reverse then
+								dir = Vector(0,1,0)
+							else
+								dir = Vector(0,-1,0)
+							end
+						elseif axis2 == "GetUp" then
+							if reverse then
+								dir = Vector(0,0,-1)
+							else
+								dir = Vector(0,0,1)
+							end
 						end
 
+						local dist = (plane_pos - center_pos):Dot(m[axis2](m))
 						if reverse then
 							self.entity.transform:SetCageSizeMax(cage_min_start - (dir * dist))
 						else
@@ -2135,15 +2162,15 @@ do -- components
 					--ent:SetPosition(pos)
 				end
 
-				local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2))
+				local ent = create_grab(self, model, -dir*dist/1.25, build_callback(axis, axis2, true))
 				ent:SetLocalScale(Vector(1,1,1)*scale)
 				ent:SetColor(gizmo_color)
 				ent:AddEvent("Update", function(ent)
 					local m = self.entity.transform:GetMatrix()
-					update(ent, m[axis2](m))
+					--update(ent, m[axis2](m)*-1)
 				end)
 
-				local ent = create_grab(self, model, dir*dist/1.5, build_callback(axis, axis2, true))
+				local ent = create_grab(self, model, dir*dist/1.25, build_callback(axis, axis2))
 				ent:SetLocalScale(Vector(1,1,1)*scale)
 				ent:SetColor(gizmo_color)
 
@@ -2168,7 +2195,7 @@ do -- components
 				self:SetupViewTranslation()
 				self:SetupTranslation()
 				self:SetupRotation()
-				--self:SetupScale()
+				self:SetupScale()
 			else
 				for k,v in pairs(self.grab_entities) do
 					v:Remove()
@@ -2327,7 +2354,7 @@ if me then
 			node:SetModel(ent:GetModel())
 
 			local m = ent:GetWorldTransformMatrix()
-			m:Translate(node.transform:GetCageCenter())
+			--m:Translate(node.transform:GetCageCenter())
 			node.transform:SetWorldMatrix(m)
 			node:EnableGizmo(true)
 		end
@@ -2348,7 +2375,7 @@ if me then
 				node:SetModel(tr.Entity:GetModel())
 
 				local m = tr.Entity:GetWorldTransformMatrix()
-				m:Translate(node.transform:GetCageCenter())
+				--m:Translate(node.transform:GetCageCenter())
 				node.transform:SetWorldMatrix(m)
 				--node:EnableGizmo(true)
 				tr.Entity.LOL = node
