@@ -956,6 +956,20 @@ do -- components
 			self.TRScale = Vector(1,1,1)
 		end
 
+		if DEBUG then
+			function META.EVENTS:Update()
+				debugoverlay.BoxAngles(
+					self.entity:GetWorldPosition(),
+					self.entity:GetMin(),
+					self.entity:GetMax(),
+					self.entity:GetWorldAngles(),
+					0,
+					Color(0,0,255,1),
+					true
+				)
+			end
+		end
+
 		META.CageSizeMin = Vector(0,0,0)
 		META.CageSizeMax = Vector(0,0,0)
 
@@ -1116,6 +1130,10 @@ do -- components
 			end
 
 			function META:InvalidateScaleMatrix()
+				if self.entity.bounding_box then
+					self.entity.bounding_box:Invalidate()
+				end
+
 				local tr = Matrix()
 				---self.CageScaleMin = Vector(1,1,1)
 
@@ -2157,9 +2175,9 @@ do -- components
 
 					if not box_pos then return end
 
-					local pos, ang = self.entity:WorldToLocal(box_pos, self.entity:GetWorldAngles())
+					ent:SetWorldPosition(box_pos)
 
-					--ent:SetPosition(pos)
+					ent.transform:GetMatrix()
 				end
 
 				local ent = create_grab(self, model, -dir*dist/1.25, build_callback(axis, axis2, true))
@@ -2167,7 +2185,11 @@ do -- components
 				ent:SetColor(gizmo_color)
 				ent:AddEvent("Update", function(ent)
 					local m = self.entity.transform:GetMatrix()
-					--update(ent, m[axis2](m)*-1)
+					if axis2 == "GetRight" then
+						update(ent, m[axis2](m))
+					else
+						update(ent, m[axis2](m)*-1)
+					end
 				end)
 
 				local ent = create_grab(self, model, dir*dist/1.25, build_callback(axis, axis2))
@@ -2176,7 +2198,12 @@ do -- components
 
 				ent:AddEvent("Update", function(ent)
 					local m = self.entity.transform:GetMatrix()
-					update(ent, m[axis2](m)*-1)
+
+					if axis2 == "GetRight" then
+						update(ent, m[axis2](m) * -1)
+					else
+						update(ent, m[axis2](m))
+					end
 				end)
 
 				return ent
