@@ -4,16 +4,14 @@
 			difficult to cram everything into matrices sometimes, maybe it's
 			best to do it at cache time
 
-		fix issues with world to local
-
 		lock mouse to axis?
-		center gizmo when scaling? maybe on release?
-
 		figure out a better way to mirror everything
+
+		fix plane origin being off center when rotating
 ]]
 
 local TEST = true
-local DEBUG = true
+local DEBUG = false
 
 if pac999_models then
 	hook.Remove("RenderScene", "pac_999")
@@ -223,7 +221,7 @@ do
 	end
 
 	function utility.TransformVector(matrix, vec)
-		return Vector(utility.TransformVectorFast())
+		return Vector(utility.TransformVectorFast(matrix, vec))
 	end
 
 	pac999.utility = utility
@@ -1344,10 +1342,6 @@ do -- components
 			return self.Transform:GetTranslation()
 		end
 
-		function META:GetLocalPosition()
-			return self.Transform:GetTranslation()
-		end
-
 		function META:SetAngles(a)
 			self.Transform:SetAngles(a)
 			self:InvalidateMatrix()
@@ -1407,6 +1401,7 @@ do -- components
 				self.CorrectedMax = Vector(math.max(min.x, max.x), math.max(min.y, max.y), math.max(min.z, max.z))
 
 				self.Center = LerpVector(0.5, self.CorrectedMin, self.CorrectedMax)
+				print(self.Center, min, max, "!")
 
 				local x = math.abs(self.CorrectedMin.x) + math.abs(self.CorrectedMax.x)
 				local y = math.abs(self.CorrectedMin.y) + math.abs(self.CorrectedMax.y)
@@ -1457,16 +1452,46 @@ do -- components
 				return self.BoundingRadius
 			end
 
+			function META:GetWorldMin2()
+				local v = self.entity:GetMin()*1
+				v:Rotate(self.entity:GetWorldAngles())
+				v = v + self.entity:GetWorldPosition()
+				return v
+			end
+
+			function META:GetWorldMax2()
+				local v = self.entity:GetMax()*1
+				v:Rotate(self.entity:GetWorldAngles())
+				v = v + self.entity:GetWorldPosition()
+				return v
+			end
+
 			function META:GetWorldCenter()
-				return LerpVector(0.5, self:GetWorldMin(), self:GetWorldMax())
+				return LerpVector(0.5, self:GetWorldMin2(), self:GetWorldMax2())
 			end
 		end
 
 		function META:NearestPoint(point)
-			local pos = self.entity:GetWorldPosition()
+			local pos = self.entity:GetWorldCenter()
 			local ang = self.entity:GetWorldAngles()
-			local min = self:GetMin()
-			local max = self:GetMax()
+
+			local min = self:GetWorldMin2()
+			local max = self:GetWorldMax2()
+
+			local pos = LerpVector(0.5, min, max)
+
+			local m = self.entity:GetMatrix()*Matrix()
+			m:SetTranslation(pos)
+
+			local lmat = Matrix()
+			lmat:SetTranslation(min)
+
+			min = (m:GetInverse() * lmat):GetTranslation()
+
+			local lmat = Matrix()
+			lmat:SetTranslation(max)
+			max = (m:GetInverse() * lmat):GetTranslation()
+
 
 			local dir = pos - point
 
@@ -1479,7 +1504,24 @@ do -- components
 				max
 			)
 
+
+
 			if DEBUG then
+
+
+				debugoverlay.Sphere(min, 4, 0, Color(0,255,255), true)
+				debugoverlay.Sphere(max, 4, 0, Color(0,255,255), true)
+
+				debugoverlay.BoxAngles(
+					pos,
+					min,
+					max,
+					ang,
+					0,
+					Color(255,0,255, 10), true
+				)
+
+
 				debugoverlay.Cross(point, 10,0)
 
 				if hit_pos then
@@ -1672,7 +1714,7 @@ do -- components
 			local world = self.entity.transform:GetMatrix()
 
 			local m = world * Matrix()
-			--m:Translate(-self.entity.transform:GetCageCenter())
+		--	m:Translate(-self.entity.transform:GetCageCenter())
 			mdl:SetRenderOrigin(m:GetTranslation())
 
 			m:SetTranslation(vector_origin)
@@ -1787,6 +1829,10 @@ do -- components
 			ent:SetMaterial(white_mat)
 			ent:SetAlpha(1)
 			ent:SetIgnoreParentScale(true)
+			ent:AddEvent("Update", function()
+				ent:SetWorldPosition(self.entity:GetWorldCenter())
+				ent:SetPosition(pos)
+			end)
 
 			if on_grab then
 				ent:AddEvent("Pointer", function(component, hovered, grabbed)
@@ -1832,6 +1878,10 @@ do -- components
 
 			ent:SetColor(YELLOW)
 			ent:SetLocalScale(Vector(1,1,1)*0.5)
+
+			ent:AddEvent("Update", function()
+				ent:SetWorldPosition(self.entity:GetWorldCenter())
+			end)
 		end
 
 		function META:StartGrab(axis, center)
@@ -1925,7 +1975,7 @@ do -- components
 						visual:SetColor(color_white)
 						visual:SetAlpha(1)
 						visual:SetLocalScale(Vector(thickness/25,thickness/25,32000))
-
+						visual:SetWorldPosition(self.entity:GetWorldCenter())
 						local a
 
 						if axis == "GetRight" then
@@ -1951,6 +2001,16 @@ do -- components
 				local dir = m[axis2](m)*dist
 				local wpos = self.entity:GetWorldPosition()
 
+				local function update(ent, dir)
+					local box_pos = self.entity:NearestPoint(self.entity:GetWorldCenter() + dir * 1000)
+
+					if not box_pos then return end
+
+					ent:SetWorldPosition(box_pos + (box_pos - self.entity:GetWorldCenter()):GetNormalized() * 15)
+
+					ent.transform:GetMatrix()
+				end
+
 				do
 					local ent = create_grab(self, model, vector_origin, build_callback(axis, axis2))
 					ent:SetLocalScale(Vector(1,1,1)*0.25)
@@ -1958,6 +2018,12 @@ do -- components
 					ent:SetAngles(ent:GetPosition():AngleEx(Vector(0,0,1)) + Angle(90,0,0))
 					ent:SetColor(gizmo_color)
 					ent:SetWorldPosition(ent:GetWorldPosition() + ent:GetUp() * ent:GetBoundingRadius()*2)
+
+					ent:AddEvent("Update", function(ent)
+						local m = self.entity.transform:GetMatrix()
+
+						update(ent, m[axis2](m))
+					end)
 				end
 
 				do
@@ -1968,6 +2034,11 @@ do -- components
 					ent:SetAngles(ent:GetPosition():AngleEx(Vector(0,0,1)) + Angle(90,0,0))
 					ent:SetColor(gizmo_color)
 					ent:SetWorldPosition(ent:GetWorldPosition() + ent:GetUp() * ent:GetBoundingRadius()*2.15)
+					ent:AddEvent("Update", function(ent)
+						local m = self.entity.transform:GetMatrix()
+
+						update(ent, m[axis2](m)*-1)
+					end)
 				end
 
 				return ent
@@ -2009,6 +2080,10 @@ do -- components
 
 					if not m then return end
 
+					local centerw = self.entity:GetWorldCenter()
+					local old_tr = m:GetTranslation()
+					local center = utility.TransformVector(m:GetInverse(), centerw)
+
 					local local_start_rotation = local_matrix(m, (center_pos - m:GetTranslation())*invert)
 
 					return function()
@@ -2016,7 +2091,10 @@ do -- components
 
 						if not plane_pos then return end
 
+						debugoverlay.Sphere(plane_pos, 4, 0, RED, Color(255,0,0,255), true)
+
 						local local_drag_rotation = local_matrix(m, (plane_pos - m:GetTranslation())*invert)
+
 
 						local m = m * Matrix()
 
@@ -2037,15 +2115,14 @@ do -- components
 						end
 
 						local rot = Matrix()
-						rot:SetAngles(ang)
+						rot:Rotate(ang)
 						local ang = (m * rot):GetAngles()
-
+						m:Translate(center)
 						m:SetAngles(ang)
 
-						self:SetWorldMatrix(m)
-						-- TODO
-						self.entity.transform:SetPosition(self.grab_transform:GetTranslation())
-
+						m = m * self.grab_matrix:GetInverse() * self.grab_transform
+						m:Translate(-center)
+						self.entity.transform:SetTRMatrix(m)
 					end
 				end
 			end
@@ -2072,6 +2149,14 @@ do -- components
 					ent:SetLocalScale(Vector(1,1,0.0125) * 0.02 * self.entity:GetBoundingRadius())
 
 					ent:SetColor(gizmo_color)
+
+					ent:AddEvent("Update", function()
+						ent:SetWorldPosition(self.entity:GetWorldCenter())
+						local s = self.entity:GetScaleMatrix():GetScale()
+						local l = math.max(s.x, s.y, s.z)/3
+						ent:SetLocalScale(Vector(1,1,0.0125) * 0.02 * self.entity:GetBoundingRadius() * l)
+						--ent:SetPosition(vect)
+					end)
 				end
 			end
 
@@ -2165,13 +2250,10 @@ do -- components
 				end
 			end
 
-			local function add_grabbable(dir, gizmo_angle, gizmo_color, axis, axis2)
+			local function add_grabbable(gizmo_angle, gizmo_color, axis, axis2)
 
 				local function update(ent, dir)
-					local min = self.entity.bounding_box:GetWorldMin()
-					local max = self.entity.bounding_box:GetWorldMax()
-
-					local box_pos = self.entity:NearestPoint(self.entity:GetWorldPosition() + dir * 1000)
+					local box_pos = self.entity:NearestPoint(self.entity:GetWorldCenter() + dir * 1000)
 
 					if not box_pos then return end
 
@@ -2180,7 +2262,7 @@ do -- components
 					ent.transform:GetMatrix()
 				end
 
-				local ent = create_grab(self, model, -dir*dist/1.25, build_callback(axis, axis2, true))
+				local ent = create_grab(self, model, vector_origin, build_callback(axis, axis2, true))
 				ent:SetLocalScale(Vector(1,1,1)*scale)
 				ent:SetColor(gizmo_color)
 				ent:AddEvent("Update", function(ent)
@@ -2192,7 +2274,7 @@ do -- components
 					end
 				end)
 
-				local ent = create_grab(self, model, dir*dist/1.25, build_callback(axis, axis2))
+				local ent = create_grab(self, model, vector_origin, build_callback(axis, axis2))
 				ent:SetLocalScale(Vector(1,1,1)*scale)
 				ent:SetColor(gizmo_color)
 
@@ -2209,9 +2291,9 @@ do -- components
 				return ent
 			end
 
-			add_grabbable(Vector(1,0,0), Angle(90,0,0), RED, "GetRight", "GetForward")
-			add_grabbable(Vector(0,1,0), Angle(0,0,-90), GREEN, "GetForward", "GetRight")
-			add_grabbable(Vector(0,0,1), Angle(0,0,0), BLUE, "GetRight", "GetUp")
+			add_grabbable(Angle(90,0,0), RED, "GetRight", "GetForward")
+			add_grabbable(Angle(0,0,-90), GREEN, "GetForward", "GetRight")
+			add_grabbable(Angle(0,0,0), BLUE, "GetRight", "GetUp")
 		end
 
 		function META:EnableGizmo(b)
@@ -2384,6 +2466,7 @@ if me then
 			--m:Translate(node.transform:GetCageCenter())
 			node.transform:SetWorldMatrix(m)
 			node:EnableGizmo(true)
+			node:SetCageSizeMin(Vector(100,100,0))
 		end
 	end
 
